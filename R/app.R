@@ -296,7 +296,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       message("Loading polygon data from: ", polygon_path)
       poly_dt <- fread(polygon_path)
       valid_cells <- df[[cell_id_col]]
-      poly_dt <- poly_dt[poly_dt[["cell"]] %in% valid_cells]
+      poly_dt <- poly_dt[poly_dt[["cell"]] %in% valid_cells, ]
       if (nrow(poly_dt) > 0) {
         has_polygons <- TRUE
         setkey(poly_dt, "cell")
@@ -1415,7 +1415,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
     # Uses data.table operations for performance
     build_polygon_traces <- function(cell_ids) {
       if (length(cell_ids) == 0) return(list(x = numeric(0), y = numeric(0)))
-      sub <- poly_dt[poly_dt[["cell"]] %in% cell_ids]
+      sub <- poly_dt[poly_dt[["cell"]] %in% cell_ids, ]
       result <- sub[, {
         list(
           x = c(x_global_px, x_global_px[1L], NA_real_),
@@ -1494,7 +1494,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           # Use polygon centroids for positioning
           vis_idx <- match(visible_cells, df[[cell_id_col]])
           vis_idx <- vis_idx[!is.na(vis_idx)]
-          vis_centroids <- poly_centroids[poly_centroids[["cell"]] %in% visible_cells]
+          vis_centroids <- poly_centroids[poly_centroids[["cell"]] %in% visible_cells, ]
 
           p <- plot_ly(source = "spatial") %>%
             add_trace(
