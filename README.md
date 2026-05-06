@@ -22,7 +22,7 @@ library(SpatialViewer)
 launch_spatial_viewer()
 ```
 
-The app opens in your browser with a file picker. Select your Seurat RDS file, optionally a polygon file, and click **Load dataset**. To switch datasets, use the **Load Dataset** panel in the sidebar and click **Reload** — the app restarts automatically with the new file.
+The app opens in your browser with a file picker. Select your Seurat RDS file, optionally a polygon file, and click **Load dataset**. Expand **Advanced settings** to change coordinate columns, assay, reduction, or polygon cell ID column before loading. To switch datasets, use the **Load Dataset** panel in the sidebar and click **Reload** — the app restarts with the new file.
 
 You can also pass a path directly to skip the picker:
 
@@ -58,8 +58,8 @@ Distribution plots for any metadata column or gene, with an optional grouping va
 
 The input must be a Seurat object (≥ v5.0) saved as an `.rds` file with:
 
-- **Spatial coordinates**: Two numeric columns in `obj@meta.data`. Defaults are `x_centroid` and `y_centroid`; override with `x_col` and `y_col` parameters.
-- **Counts assay**: A counts matrix accessible via `obj[["RNA"]]$counts` (or the assay set via the `assay` parameter).
+- **Spatial coordinates**: Two numeric columns in `obj@meta.data`. Defaults are `x_centroid` and `y_centroid`; change in **Advanced settings** or via the `x_col`/`y_col` parameters.
+- **Counts assay**: A counts matrix accessible via `obj[["RNA"]]$counts` (or the assay set in **Advanced settings** / via the `assay` parameter).
 - **Dimensionality reduction** (optional): A reduction slot (e.g. `umap`) in `obj@reductions`. The app auto-detects a fallback if the named slot is absent.
 
 **Optional polygon file**: A CSV or gzipped CSV (`.csv.gz`) with columns:
@@ -70,52 +70,57 @@ The input must be a Seurat object (≥ v5.0) saved as an `.rds` file with:
 | `x_global_px` | X coordinate of polygon vertex |
 | `y_global_px` | Y coordinate of polygon vertex |
 
+Set the matching metadata column in **Advanced settings** (Cell ID column) or via `cell_id_col`.
+
 ---
 
 ## Function Reference
 
 ```r
 launch_spatial_viewer(
-  seurat_path      = NULL,   # if NULL, opens with interactive file picker
-  exclude_vars     = character(0),
-  exclude_patterns = character(0),
-  x_col            = "x_centroid",
-  y_col            = "y_centroid",
-  reduction        = "umap",
-  assay            = "RNA",
-  polygon_path     = NULL,
-  cell_id_col      = NULL,
-  celltype_col     = NULL
+  seurat_path      = NULL,  # if NULL, opens with interactive file picker
+  exclude_vars     = NULL,  # character vector of column names to hide (programmatic only)
+  exclude_patterns = NULL,  # substrings to match and hide; also in Advanced settings
+  x_col            = NULL,  # default "x_centroid"; also in Advanced settings
+  y_col            = NULL,  # default "y_centroid"; also in Advanced settings
+  reduction        = NULL,  # default "umap";       also in Advanced settings
+  assay            = NULL,  # default "RNA";        also in Advanced settings
+  continuous_pals  = NULL,  # additional continuous palette names to add to the dropdown
+  polygon_path     = NULL,  # path to polygon CSV or .csv.gz
+  cell_id_col      = NULL,  # metadata column matching polygon 'cell'; also in Advanced settings
+  celltype_col     = NULL,  # pre-selected cell type grouping column
+  config_path      = NULL   # path to a config.R file; auto-detects "config.R" in working directory
 )
 ```
+
+Explicit arguments always take priority over config file values, which in turn take priority over built-in defaults.
 
 ---
 
 ## Configuration
 
-For repeated use, copy the bundled `config.R` template, set your paths, and source it:
+For repeated use with a specific dataset, copy the bundled `config.R` template into your working directory and edit it:
 
 ```r
-file.copy(system.file("config.R", package = "SpatialViewer"), "~/my_config.R")
-# edit ~/my_config.R, then:
-source("~/my_config.R")
-launch_spatial_viewer(
-  seurat_path      = DATA_FILE,
-  exclude_vars     = EXCLUDE_VARS,
-  exclude_patterns = EXCLUDE_PATTERNS,
-  x_col            = X_COL,
-  y_col            = Y_COL,
-  reduction        = REDUCTION,
-  polygon_path     = POLYGON_FILE,
-  cell_id_col      = CELL_ID_COL
-)
+file.copy(system.file("config.R", package = "SpatialViewer"), "config.R")
 ```
 
-Alternatively, run via `Rscript` from a terminal (useful for scripting or remote sessions):
+Then launch normally — the file is detected automatically:
 
-```bash
-Rscript $(Rscript -e "cat(system.file('run_app.R', package='SpatialViewer'))") \
-  /path/to/data.rds /path/to/polygons.csv.gz
+```r
+launch_spatial_viewer()
+```
+
+To use a config file stored elsewhere:
+
+```r
+launch_spatial_viewer(config_path = "~/datasets/lung/config.R")
+```
+
+Explicit arguments always override config values, so you can mix both:
+
+```r
+launch_spatial_viewer(x_col = "x_global_mm")  # everything else from config.R
 ```
 
 ---
@@ -145,7 +150,11 @@ obj <- readRDS("your_object.rds")
 colnames(obj@meta.data)
 ```
 
-Pass the correct column names to `launch_spatial_viewer()`.
+Set the correct names in **Advanced settings** before loading, or pass them as arguments:
+
+```r
+launch_spatial_viewer(x_col = "x_slide_mm", y_col = "y_slide_mm")
+```
 
 **Seurat v4 object**
 

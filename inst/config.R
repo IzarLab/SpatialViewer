@@ -1,6 +1,9 @@
 # SpatialViewer configuration
-# Copy this file locally, edit the values below, then source() it before
-# calling launch_spatial_viewer(). See README for details.
+# Place this file in your working directory — launch_spatial_viewer() will
+# detect and load it automatically. Or pass config_path explicitly:
+#   launch_spatial_viewer(config_path = "path/to/this/config.R")
+# Any value set here can be overridden by the Advanced settings panel in the
+# app or by passing an argument directly to launch_spatial_viewer().
 
 DATA_FILE <- "/path/to/your_seurat_object.rds"
 
@@ -19,6 +22,9 @@ Y_COL <- "y_slide_mm"
 
 # Dimensionality reduction slot to show (auto-detects a fallback if absent)
 REDUCTION <- "umap"
+
+# Seurat assay name to read counts from
+ASSAY <- "RNA"
 
 # Polygon overlay — set to NULL to disable.
 # CSV or .csv.gz with columns: cell, x_global_px, y_global_px

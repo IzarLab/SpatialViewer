@@ -49,17 +49,18 @@
 #' }
 #'
 #' @export
-launch_spatial_viewer <- function(seurat_path = NULL,
-                                  exclude_vars     = character(0),
-                                  exclude_patterns = character(0),
-                                  x_col            = "x_centroid",
-                                  y_col            = "y_centroid",
-                                  reduction        = "umap",
-                                  assay            = "RNA",
+launch_spatial_viewer <- function(seurat_path      = NULL,
+                                  exclude_vars     = NULL,
+                                  exclude_patterns = NULL,
+                                  x_col            = NULL,
+                                  y_col            = NULL,
+                                  reduction        = NULL,
+                                  assay            = NULL,
                                   continuous_pals  = NULL,
                                   polygon_path     = NULL,
                                   cell_id_col      = NULL,
-                  celltype_col     = NULL) {
+                                  celltype_col     = NULL,
+                                  config_path      = if (file.exists("config.R")) "config.R" else NULL) {
   library(shiny)
   library(plotly)
   library(RColorBrewer)
@@ -69,6 +70,30 @@ launch_spatial_viewer <- function(seurat_path = NULL,
   library(Seurat)
   library(data.table)
   library(shinyFiles)
+
+  # Load config file and apply as defaults for any parameters not explicitly provided
+  if (!is.null(config_path) && file.exists(config_path)) {
+    cfg <- new.env(parent = emptyenv())
+    source(config_path, local = cfg)
+    if (is.null(seurat_path)      && exists("DATA_FILE",        envir = cfg)) seurat_path      <- cfg$DATA_FILE
+    if (is.null(exclude_vars)     && exists("EXCLUDE_VARS",     envir = cfg)) exclude_vars     <- cfg$EXCLUDE_VARS
+    if (is.null(exclude_patterns) && exists("EXCLUDE_PATTERNS", envir = cfg)) exclude_patterns <- cfg$EXCLUDE_PATTERNS
+    if (is.null(x_col)            && exists("X_COL",            envir = cfg)) x_col            <- cfg$X_COL
+    if (is.null(y_col)            && exists("Y_COL",            envir = cfg)) y_col            <- cfg$Y_COL
+    if (is.null(reduction)        && exists("REDUCTION",        envir = cfg)) reduction        <- cfg$REDUCTION
+    if (is.null(assay)            && exists("ASSAY",            envir = cfg)) assay            <- cfg$ASSAY
+    if (is.null(polygon_path)     && exists("POLYGON_FILE",     envir = cfg)) polygon_path     <- cfg$POLYGON_FILE
+    if (is.null(cell_id_col)      && exists("CELL_ID_COL",      envir = cfg)) cell_id_col      <- cfg$CELL_ID_COL
+    if (is.null(celltype_col)     && exists("CELLTYPE_COL",     envir = cfg)) celltype_col     <- cfg$CELLTYPE_COL
+  }
+
+  # Hardcoded fallbacks (lowest priority — config and explicit args override these)
+  if (is.null(exclude_vars))     exclude_vars     <- character(0)
+  if (is.null(exclude_patterns)) exclude_patterns <- character(0)
+  if (is.null(x_col))            x_col            <- "x_centroid"
+  if (is.null(y_col))            y_col            <- "y_centroid"
+  if (is.null(reduction))        reduction        <- "umap"
+  if (is.null(assay))            assay            <- "RNA"
 
   repeat {
     .sv_path <- file.path(tempdir(), ".spatial_viewer_path")
@@ -80,10 +105,31 @@ launch_spatial_viewer <- function(seurat_path = NULL,
       pp <- readLines(.sv_poly, n = 1); file.remove(.sv_poly)
       polygon_path <- if (nzchar(pp)) pp else NULL
     }
+    .sv_settings <- file.path(tempdir(), ".spatial_viewer_settings.rds")
+    if (file.exists(.sv_settings)) {
+      .cfg <- readRDS(.sv_settings); file.remove(.sv_settings)
+      x_col            <- .cfg$x_col
+      y_col            <- .cfg$y_col
+      reduction        <- .cfg$reduction
+      assay            <- .cfg$assay
+      cell_id_col      <- .cfg$cell_id_col
+      exclude_patterns <- .cfg$exclude_patterns
+    }
 
     if (is.null(seurat_path)) {
       volumes_l <- c(Home = path.expand("~"), getVolumes()())
       land_ui <- fluidPage(
+        tags$head(tags$style(HTML("
+          .adv-section > summary {
+            cursor: pointer; color: #888; font-size: 12px;
+            list-style: none; padding: 2px 0;
+          }
+          .adv-section > summary::-webkit-details-marker { display: none; }
+          .adv-section > summary:hover { color: #337ab7; }
+          .adv-section .form-group { margin-bottom: 6px; }
+          .adv-section label { font-size: 12px; color: #555; margin-bottom: 2px; }
+          .adv-section input[type=’text’] { font-size: 12px; height: 28px; padding: 2px 6px; }
+        "))),
         titlePanel("Spatial Transcriptomics Viewer"),
         sidebarLayout(
           sidebarPanel(
@@ -100,6 +146,22 @@ launch_spatial_viewer <- function(seurat_path = NULL,
             verbatimTextOutput("current_poly_path", placeholder = TRUE),
             actionButton("clear_poly_btn", "Clear", icon = icon("times")),
             tags$hr(),
+            tags$details(
+              class = "adv-section",
+              tags$summary("▶ Advanced settings"),
+              tags$div(
+                style = "padding: 8px 0 4px 0;",
+                textInput("x_col_input",    "X coordinate column:",       value = x_col),
+                textInput("y_col_input",    "Y coordinate column:",       value = y_col),
+                textInput("reduction_input","Dimensionality reduction:",  value = reduction),
+                textInput("assay_input",    "Seurat assay:",              value = assay),
+                textInput("cell_id_col_input", "Cell ID column (for polygons):",
+                          value = if (!is.null(cell_id_col)) cell_id_col else ""),
+                textInput("exclude_patterns_input", "Hide columns matching (comma-separated):",
+                          value = paste(exclude_patterns, collapse = ", "))
+              )
+            ),
+            tags$br(),
             actionButton("reload_btn", "Load dataset", icon = icon("play"),
                          style = "color: white; background-color: #337ab7;"),
             width = 3
@@ -139,6 +201,18 @@ launch_spatial_viewer <- function(seurat_path = NULL,
           if (nzchar(p) && file.exists(p)) {
             writeLines(p, file.path(tempdir(), ".spatial_viewer_path"))
             writeLines(sel_poly(), file.path(tempdir(), ".spatial_viewer_polypath"))
+            raw_patterns <- trimws(strsplit(input$exclude_patterns_input, ",")[[1]])
+            saveRDS(
+              list(
+                x_col            = input$x_col_input,
+                y_col            = input$y_col_input,
+                reduction        = input$reduction_input,
+                assay            = input$assay_input,
+                cell_id_col      = if (nzchar(input$cell_id_col_input)) input$cell_id_col_input else NULL,
+                exclude_patterns = raw_patterns[nzchar(raw_patterns)]
+              ),
+              file.path(tempdir(), ".spatial_viewer_settings.rds")
+            )
             stopApp()
           }
         })
