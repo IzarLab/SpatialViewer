@@ -143,7 +143,7 @@ launch_spatial_viewer <- function(seurat_path = NULL,
           }
         })
       }
-      shinyApp(land_ui, land_server)
+      runApp(shinyApp(land_ui, land_server))
       next
     }
 
@@ -1733,7 +1733,7 @@ launch_spatial_viewer <- function(seurat_path = NULL,
     }, ignoreInit = TRUE)
   }
 
-  shinyApp(ui, server)
+  runApp(shinyApp(ui, server))
 
   if (!file.exists(file.path(tempdir(), ".spatial_viewer_path"))) break
   seurat_path <- NULL
