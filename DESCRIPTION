@@ -1,0 +1,27 @@
+Package: SpatialViewer
+Title: Interactive Spatial Transcriptomics Viewer for Seurat Objects
+Version: 0.1.0
+Authors@R: person("Frederik", "Stihler", email = "frederik.stihler@berkeley.edu",
+    role = c("aut", "cre"))
+Description: Launches an interactive Shiny application for exploring spatial
+    transcriptomics data stored in Seurat objects. Supports cell-level
+    visualization of spatial coordinates, dimensionality reduction embeddings,
+    metadata, and gene expression with optional polygon overlays.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends:
+    R (>= 4.2.0)
+Imports:
+    shiny,
+    plotly,
+    RColorBrewer,
+    viridis,
+    colourpicker,
+    ggplot2,
+    Seurat (>= 5.0.0),
+    data.table,
+    shinyFiles,
+    Matrix,
+    scales

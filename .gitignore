@@ -1,0 +1,15 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# macOS
+.DS_Store
+._*
+
+# Package build artifacts
+*.tar.gz
+*.zip
+/doc/
+/Meta/
