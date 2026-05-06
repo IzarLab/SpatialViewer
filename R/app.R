@@ -32,6 +32,8 @@
 #'
 #' @return Called for its side effect: launches a blocking Shiny application.
 #'
+#' @import data.table
+#'
 #' @examples
 #' \dontrun{
 #' # Minimal usage
@@ -300,7 +302,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       if (nrow(poly_dt) > 0) {
         has_polygons <- TRUE
         setkey(poly_dt, "cell")
-        poly_centroids <- poly_dt[, .(cx = mean(x_global_px), cy = mean(y_global_px)), by = "cell"]
+        poly_centroids <- poly_dt[, list(cx = mean(x_global_px), cy = mean(y_global_px)), by = "cell"]
         message("Polygon data loaded: ", length(unique(poly_dt[["cell"]])),
                 " cells, ", nrow(poly_dt), " vertices")
       } else {
@@ -1412,16 +1414,13 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
     })
 
     # Helper: build NA-separated polygon vertex vectors for a set of cells
-    # Uses data.table operations for performance
     build_polygon_traces <- function(cell_ids) {
       if (length(cell_ids) == 0) return(list(x = numeric(0), y = numeric(0)))
       sub <- poly_dt[poly_dt[["cell"]] %in% cell_ids, ]
-      result <- sub[, {
-        list(
-          x = c(x_global_px, x_global_px[1L], NA_real_),
-          y = c(y_global_px, y_global_px[1L], NA_real_)
-        )
-      }, by = "cell"]
+      result <- sub[, list(
+        x = c(x_global_px, x_global_px[1L], NA_real_),
+        y = c(y_global_px, y_global_px[1L], NA_real_)
+      ), by = "cell"]
       list(x = result$x, y = result$y)
     }
 
