@@ -288,21 +288,25 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
   has_polygons <- FALSE
   poly_dt <- NULL
   if (!is.null(polygon_path) && file.exists(polygon_path) && !is.null(cell_id_col)) {
-    message("Loading polygon data from: ", polygon_path)
-    poly_dt <- fread(polygon_path)
-    # Filter to cells present in Seurat metadata
-    valid_cells <- df[[cell_id_col]]
-    poly_dt <- poly_dt[cell %in% valid_cells]
-    if (nrow(poly_dt) > 0) {
-      has_polygons <- TRUE
-      setkey(poly_dt, cell)
-      # Pre-compute per-cell centroids for zoom-based filtering
-      poly_centroids <- poly_dt[, .(cx = mean(x_global_px), cy = mean(y_global_px)), by = cell]
-      message("Polygon data loaded: ", length(unique(poly_dt$cell)),
-              " cells, ", nrow(poly_dt), " vertices")
+    if (!cell_id_col %in% colnames(df)) {
+      message("Warning: cell_id_col '", cell_id_col, "' not found in Seurat metadata. ",
+              "Polygons disabled. Available columns: ",
+              paste(colnames(df), collapse = ", "))
     } else {
-      message("Warning: No polygon cells matched Seurat cell IDs. Polygons disabled.")
-      poly_dt <- NULL
+      message("Loading polygon data from: ", polygon_path)
+      poly_dt <- fread(polygon_path)
+      valid_cells <- df[[cell_id_col]]
+      poly_dt <- poly_dt[poly_dt[["cell"]] %in% valid_cells]
+      if (nrow(poly_dt) > 0) {
+        has_polygons <- TRUE
+        setkey(poly_dt, "cell")
+        poly_centroids <- poly_dt[, .(cx = mean(x_global_px), cy = mean(y_global_px)), by = "cell"]
+        message("Polygon data loaded: ", length(unique(poly_dt[["cell"]])),
+                " cells, ", nrow(poly_dt), " vertices")
+      } else {
+        message("Warning: No polygon cells matched Seurat cell IDs. Polygons disabled.")
+        poly_dt <- NULL
+      }
     }
   }
 
@@ -1411,14 +1415,13 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
     # Uses data.table operations for performance
     build_polygon_traces <- function(cell_ids) {
       if (length(cell_ids) == 0) return(list(x = numeric(0), y = numeric(0)))
-      sub <- poly_dt[cell %in% cell_ids]
-      # For each cell: vertices + close polygon (repeat first vertex) + NA separator
+      sub <- poly_dt[poly_dt[["cell"]] %in% cell_ids]
       result <- sub[, {
         list(
           x = c(x_global_px, x_global_px[1L], NA_real_),
           y = c(y_global_px, y_global_px[1L], NA_real_)
         )
-      }, by = cell]
+      }, by = "cell"]
       list(x = result$x, y = result$y)
     }
 
@@ -1465,7 +1468,9 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           xmax <- zs[["xaxis.range[1]"]]
           ymin <- zs[["yaxis.range[0]"]]
           ymax <- zs[["yaxis.range[1]"]]
-          visible_cells <- poly_centroids[cx >= xmin & cx <= xmax & cy >= ymin & cy <= ymax, cell]
+          visible_cells <- poly_centroids$cell[
+            poly_centroids$cx >= xmin & poly_centroids$cx <= xmax &
+            poly_centroids$cy >= ymin & poly_centroids$cy <= ymax]
         } else {
           visible_cells <- poly_centroids$cell
         }
@@ -1489,7 +1494,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           # Use polygon centroids for positioning
           vis_idx <- match(visible_cells, df[[cell_id_col]])
           vis_idx <- vis_idx[!is.na(vis_idx)]
-          vis_centroids <- poly_centroids[cell %in% visible_cells]
+          vis_centroids <- poly_centroids[poly_centroids[["cell"]] %in% visible_cells]
 
           p <- plot_ly(source = "spatial") %>%
             add_trace(
