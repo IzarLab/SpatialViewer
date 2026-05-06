@@ -14,8 +14,8 @@ EXCLUDE_VARS <- c(
 EXCLUDE_PATTERNS <- character(0)
 
 # Spatial coordinate columns in obj@meta.data
-X_COL <- "x_centroid"
-Y_COL <- "y_centroid"
+X_COL <- "x_slide_mm"
+Y_COL <- "y_slide_mm"
 
 # Dimensionality reduction slot to show (auto-detects a fallback if absent)
 REDUCTION <- "umap"
