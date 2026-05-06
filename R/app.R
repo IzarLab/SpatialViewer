@@ -90,10 +90,12 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
   # Hardcoded fallbacks (lowest priority — config and explicit args override these)
   if (is.null(exclude_vars))     exclude_vars     <- character(0)
   if (is.null(exclude_patterns)) exclude_patterns <- character(0)
-  if (is.null(x_col))            x_col            <- "x_centroid"
-  if (is.null(y_col))            y_col            <- "y_centroid"
+  if (is.null(x_col))            x_col            <- "x_slide_mm"
+  if (is.null(y_col))            y_col            <- "y_slide_mm"
   if (is.null(reduction))        reduction        <- "umap"
   if (is.null(assay))            assay            <- "RNA"
+  if (is.null(cell_id_col))      cell_id_col      <- "cell_ID_new"
+
 
   repeat {
     .sv_path <- file.path(tempdir(), ".spatial_viewer_path")
