@@ -521,7 +521,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
             )
           )
         ),
-        width = 2
+        width = 3
       ),
       mainPanel(
         h4(textOutput("cell_count_text")),
@@ -534,7 +534,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
             uiOutput("summary_plots_ui")
           )
         ),
-        width = 10
+        width = 9
       )
     )
   )
@@ -966,9 +966,9 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
         if (!is.null(v) && nzchar(v)) v else "#D9D9D9"
       })
       tags$div(
-        style = "max-height:300px; overflow-y:auto; margin-top:4px; border:1px solid #ddd; border-radius:3px; padding:6px;",
+        style = "max-height:300px; overflow-y:auto; overflow-x:auto; margin-top:4px; border:1px solid #ddd; border-radius:3px; padding:6px;",
         tags$div(
-          style = "display:flex; align-items:center; gap:8px; font-size:10px; color:#888; padding:0 0 4px 0; border-bottom:1px solid #eee; margin-bottom:4px;",
+          style = "min-width:260px; display:flex; align-items:center; gap:8px; font-size:10px; color:#888; padding:0 0 4px 0; border-bottom:1px solid #eee; margin-bottom:4px;",
           tags$span(style = "flex:1;", "Cell type"),
           tags$span(style = "width:50px; text-align:center;", "Normal"),
           tags$span(style = "width:40px; text-align:center;", "Color")
@@ -977,7 +977,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           v <- lvls[i]
           tags$div(
             class = "grp-row",
-            style = "display:flex; align-items:center; gap:8px; padding:2px 0;",
+            style = "min-width:260px; display:flex; align-items:center; gap:8px; padding:2px 0;",
             tags$span(
               style = "flex:1; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;",
               title = v, v
