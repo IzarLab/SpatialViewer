@@ -6,6 +6,8 @@ An R package providing an interactive Shiny application for exploring spatial tr
 
 ## Installation
 
+**Requirements:** R ≥ 4.4.0
+
 ```r
 install.packages("devtools")
 devtools::install_github("IzarLab/SpatialViewer")
@@ -126,6 +128,12 @@ launch_spatial_viewer(x_col = "x_global_mm")  # everything else from config.R
 ---
 
 ## Troubleshooting
+
+**R version too old**
+
+The `Matrix` package (a dependency of Seurat) requires R ≥ 4.4.0. If you see an error like `package 'Matrix' requires R version 4.4.0 or higher`, update R from [cran.r-project.org](https://cran.r-project.org/) before installing.
+
+---
 
 **Seurat installation fails**
 
