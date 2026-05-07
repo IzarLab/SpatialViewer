@@ -58,7 +58,7 @@ Distribution plots for any metadata column or gene, with an optional grouping va
 
 The input must be a Seurat object (≥ v5.0) saved as an `.rds` file with:
 
-- **Spatial coordinates**: Two numeric columns in `obj@meta.data`. Defaults are `x_centroid` and `y_centroid`; change in **Advanced settings** or via the `x_col`/`y_col` parameters.
+- **Spatial coordinates**: Two numeric columns in `obj@meta.data`. Defaults are `x_slide_mm` and `y_slide_mm`; change in **Advanced settings** or via the `x_col`/`y_col` parameters.
 - **Counts assay**: A counts matrix accessible via `obj[["RNA"]]$counts` (or the assay set in **Advanced settings** / via the `assay` parameter).
 - **Dimensionality reduction** (optional): A reduction slot (e.g. `umap`) in `obj@reductions`. The app auto-detects a fallback if the named slot is absent.
 
@@ -81,8 +81,8 @@ launch_spatial_viewer(
   seurat_path      = NULL,  # if NULL, opens with interactive file picker
   exclude_vars     = NULL,  # character vector of column names to hide (programmatic only)
   exclude_patterns = NULL,  # substrings to match and hide; also in Advanced settings
-  x_col            = NULL,  # default "x_centroid"; also in Advanced settings
-  y_col            = NULL,  # default "y_centroid"; also in Advanced settings
+  x_col            = NULL,  # default "x_slide_mm"; also in Advanced settings
+  y_col            = NULL,  # default "y_slide_mm"; also in Advanced settings
   reduction        = NULL,  # default "umap";       also in Advanced settings
   assay            = NULL,  # default "RNA";        also in Advanced settings
   continuous_pals  = NULL,  # additional continuous palette names to add to the dropdown
@@ -165,7 +165,7 @@ obj <- UpdateSeuratObject(obj)
 saveRDS(obj, "updated_object.rds")
 ```
 
-**App is slow or crashes with large datasets**
+**App is slow or crashes with large datasets (it runs locally and performance depends on the machine)**
 
 For objects with more than ~500,000 cells or very large counts matrices:
 
