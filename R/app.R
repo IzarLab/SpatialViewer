@@ -245,6 +245,9 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
     metadata_vars <- c(metadata_vars, "log10_nCount_RNA")
   }
 
+  # Continuous metadata columns available for per-layer color variables
+  continuous_meta_vars <- Filter(function(v) is.numeric(df[[v]]), metadata_vars)
+
   # Extract dimensionality reduction embeddings (auto-detect if configured one is missing)
   available_reductions <- Reductions(obj)
   if (!reduction %in% available_reductions && length(available_reductions) > 0) {
@@ -437,29 +440,35 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           condition = "input.main_tabs == 'Spatial View'",
           uiOutput("coord_type_ui"),
           uiOutput("display_mode_ui"),
-          selectizeInput("color_var", "Color by:",
-            choices = list(
-              "Metadata" = setNames(metadata_vars, metadata_vars),
-              "Gene Expression" = c("Search gene..." = "GENE_SELECTOR")
-            )
-          ),
+          # Color-variable controls: hidden when layer coloring is active
           conditionalPanel(
-            condition = "input.color_var == 'GENE_SELECTOR'",
-            selectizeInput("selected_gene", "Search gene:",
-              choices = NULL, multiple = TRUE,
-              options = list(placeholder = "Type gene name...", maxOptions = 50, plugins = list("remove_button"))
+            condition = "!input.layer_mode_active",
+            selectizeInput("color_var", "Color by:",
+              choices = list(
+                "Metadata" = setNames(metadata_vars, metadata_vars),
+                "Gene Expression" = c("Search gene..." = "GENE_SELECTOR")
+              )
             ),
-            # uiOutput("mg_gene_list_ui")  # Disabled: remove_button plugin is sufficient
+            conditionalPanel(
+              condition = "input.color_var == 'GENE_SELECTOR'",
+              selectizeInput("selected_gene", "Search gene:",
+                choices = NULL, multiple = TRUE,
+                options = list(placeholder = "Type gene name...", maxOptions = 50, plugins = list("remove_button"))
+              ),
+              # uiOutput("mg_gene_list_ui")  # Disabled: remove_button plugin is sufficient
+            ),
+            uiOutput("cont_palette_ui"),
+            uiOutput("highlight_ui"),
+            uiOutput("color_pickers_ui"),
+            uiOutput("scale_lock_ui"),
+            uiOutput("scale_range_ui"),
+            uiOutput("celltype_grouping_ui")
           ),
+          # Render controls: always visible
           uiOutput("point_size_ui"),
           uiOutput("polygon_controls_ui"),
-          uiOutput("cont_palette_ui"),
           uiOutput("shuffle_ui"),
-          uiOutput("highlight_ui"),
-          uiOutput("color_pickers_ui"),
-          uiOutput("scale_lock_ui"),
-          uiOutput("scale_range_ui"),
-          uiOutput("celltype_grouping_ui")
+          uiOutput("layer_coloring_ui")
         ),
         # Tab 2 controls (Summary Statistics)
         conditionalPanel(
@@ -763,6 +772,10 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       row_order(sample(nrow(df)))
     })
 
+    # ---- Layer coloring state ----
+    layer_ids    <- reactiveVal(character(0))  # ordered vector of active layer ID strings
+    layer_id_ctr <- reactiveVal(0L)            # monotonically increasing, never reused
+
     # Reset zoom and dragmode when switching coordinate systems or display mode
     observeEvent(input$coord_type, {
       zoom_state(NULL)
@@ -1054,6 +1067,200 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       }
       prev_bg(new_color)
     }, ignoreInit = TRUE)
+
+    # ---- Layer coloring: observers, reactives, UI ----
+
+    # Add a new layer
+    observeEvent(input$layer_add_btn, {
+      new_id <- as.character(layer_id_ctr() + 1L)
+      layer_id_ctr(layer_id_ctr() + 1L)
+      layer_ids(c(layer_ids(), new_id))
+    })
+
+    # Remove a layer via the JS × button (pattern reused from mg_remove_gene)
+    observeEvent(input$layer_rm_clicked, {
+      id <- sub("\\|.*", "", input$layer_rm_clicked)
+      layer_ids(setdiff(layer_ids(), id))
+    })
+
+    # Populate cell-type selectize for all layers when column or layer list changes
+    observeEvent(list(layer_ids(), input$layer_group_col), {
+      col <- input$layer_group_col
+      if (is.null(col) || !nzchar(col) || !col %in% colnames(df)) return()
+      choices <- sort(unique(as.character(df[[col]])))
+      for (id in layer_ids()) {
+        updateSelectizeInput(session, paste0("layer_types_", id),
+                             choices = choices, server = TRUE)
+      }
+    })
+
+    # Auto-populate scale min/max when variable or cell types change (only when not fixed)
+    observeEvent(layer_ids(), {
+      for (id in layer_ids()) {
+        local({
+          lid <- id
+          observeEvent(
+            list(input[[paste0("layer_var_",   lid)]],
+                 input[[paste0("layer_types_", lid)]]),
+            {
+              if (isTRUE(input[[paste0("layer_fix_", lid)]])) return()
+              var   <- input[[paste0("layer_var_",   lid)]]
+              types <- input[[paste0("layer_types_", lid)]]
+              col   <- input$layer_group_col
+              if (is.null(var) || is.null(types) || length(types) == 0 ||
+                  !var %in% colnames(df) || is.null(col) || !col %in% colnames(df)) return()
+              layer_cells <- as.character(df[[col]]) %in% types
+              vals <- df[[var]][layer_cells]
+              if (length(vals) == 0 || all(is.na(vals))) return()
+              updateNumericInput(session, paste0("layer_min_", lid),
+                                 value = round(min(vals, na.rm = TRUE), 4))
+              updateNumericInput(session, paste0("layer_max_", lid),
+                                 value = round(max(vals, na.rm = TRUE), 4))
+            }, ignoreInit = TRUE)
+
+          observeEvent(input[[paste0("layer_reset_", lid)]], {
+            var   <- input[[paste0("layer_var_",   lid)]]
+            types <- input[[paste0("layer_types_", lid)]]
+            col   <- input$layer_group_col
+            if (is.null(var) || is.null(types) || length(types) == 0 ||
+                !var %in% colnames(df) || is.null(col) || !col %in% colnames(df)) return()
+            layer_cells <- as.character(df[[col]]) %in% types
+            vals <- df[[var]][layer_cells]
+            if (length(vals) == 0 || all(is.na(vals))) return()
+            updateNumericInput(session, paste0("layer_min_", lid),
+                               value = round(min(vals, na.rm = TRUE), 4))
+            updateNumericInput(session, paste0("layer_max_", lid),
+                               value = round(max(vals, na.rm = TRUE), 4))
+          }, ignoreInit = TRUE)
+        })
+      }
+    })
+
+    # Per-cell layer assignment: "background", hex color, or "layer:<id>"
+    layer_group_map <- reactive({
+      if (!isTRUE(input$layer_mode_active)) return(NULL)
+      ids <- layer_ids()
+      if (length(ids) == 0) return(NULL)
+      col <- input$layer_group_col
+      if (is.null(col) || !nzchar(col) || !col %in% colnames(df)) return(NULL)
+      cell_types_vec <- as.character(df[[col]])
+      result <- rep("background", nrow(df))
+      for (id in rev(ids)) {  # reverse so layer 1 wins over later layers
+        types <- input[[paste0("layer_types_", id)]]
+        if (is.null(types) || length(types) == 0) next
+        idx <- which(cell_types_vec %in% types)
+        if (length(idx) == 0) next
+        mode <- input[[paste0("layer_mode_", id)]]
+        if (!is.null(mode) && mode == "fixed") {
+          col_val <- input[[paste0("layer_color_", id)]]
+          result[idx] <- if (!is.null(col_val) && nzchar(col_val)) col_val else "#888888"
+        } else {
+          result[idx] <- paste0("layer:", id)
+        }
+      }
+      result
+    })
+
+    # Layer coloring sidebar panel
+    output$layer_coloring_ui <- renderUI({
+      tagList(
+        tags$hr(),
+        tags$strong("Layer coloring"),
+        checkboxInput("layer_mode_active", "Enable", value = FALSE),
+        conditionalPanel(
+          condition = "input.layer_mode_active == true",
+          selectInput("layer_group_col", "Grouping column:",
+                      choices = cat_grouping_cols,
+                      selected = if (!is.null(celltype_col) && celltype_col %in% cat_grouping_cols)
+                                   celltype_col else if (length(cat_grouping_cols) > 0) cat_grouping_cols[1] else NULL),
+          uiOutput("layer_cards_ui"),
+          tags$div(
+            style = "display:flex; align-items:center; gap:8px; margin-top:6px;",
+            actionButton("layer_add_btn", "+ Add layer",
+                         style = "font-size:11px; padding:2px 8px;"),
+            tags$div(
+              style = "display:flex; align-items:center; gap:4px;",
+              tags$span(style = "font-size:11px; color:#555;", "Background:"),
+              colourInput("layer_bg_color", NULL, value = "#D9D9D9", showColour = "both")
+            )
+          )
+        )
+      )
+    })
+
+    # Render one card per active layer
+    output$layer_cards_ui <- renderUI({
+      ids <- layer_ids()
+      if (length(ids) == 0) {
+        return(tags$p(style = "color:#888; font-size:11px; margin:6px 0;",
+                      "Click '+ Add layer' to define a group."))
+      }
+      tagList(lapply(seq_along(ids), function(i) {
+        id <- ids[i]
+        safe_id <- gsub("'", "\\\\'", id)
+        tags$div(
+          style = paste0("border:1px solid #ddd; border-radius:4px; ",
+                         "padding:8px; margin-bottom:6px; background:#fafafa;"),
+          # Header row: layer label + remove button
+          tags$div(
+            style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;",
+            tags$strong(style = "font-size:12px;", paste("Layer", i)),
+            tags$a(href = "#",
+                   style = "color:#cc0000; text-decoration:none; font-weight:bold; font-size:14px;",
+                   onclick = sprintf(
+                     "Shiny.setInputValue('layer_rm_clicked','%s|'+Date.now()); return false;",
+                     safe_id),
+                   HTML("&times;"))
+          ),
+          # Cell types selectize
+          selectizeInput(paste0("layer_types_", id), "Cell types:",
+                         choices  = NULL,
+                         multiple = TRUE,
+                         options  = list(placeholder  = "Select cell types...",
+                                         plugins      = list("remove_button"),
+                                         maxOptions   = 200)),
+          # Mode: Variable vs Fixed
+          radioButtons(paste0("layer_mode_", id), NULL,
+                       choices  = c("Variable" = "variable", "Fixed color" = "fixed"),
+                       selected = "variable",
+                       inline   = TRUE),
+          # Variable controls
+          conditionalPanel(
+            condition = sprintf("input['layer_mode_%s'] == 'variable'", id),
+            selectInput(paste0("layer_var_", id), "Color by:",
+                        choices  = if (length(continuous_meta_vars) > 0) continuous_meta_vars
+                                   else c("(no numeric columns)" = "")),
+            selectInput(paste0("layer_pal_", id), "Palette:", choices = cont_choices),
+            # Scale range (collapsible)
+            tags$details(
+              tags$summary(style = "cursor:pointer; font-size:11px; color:#666; margin-bottom:4px;",
+                           "Scale range"),
+              tags$div(
+                style = "padding:4px 0;",
+                checkboxInput(paste0("layer_fix_", id), "Fix scale", value = FALSE),
+                conditionalPanel(
+                  condition = sprintf("input['layer_fix_%s'] == true", id),
+                  fluidRow(
+                    column(5, numericInput(paste0("layer_min_", id), "Min:",
+                                          value = 0, step = 0.001)),
+                    column(5, numericInput(paste0("layer_max_", id), "Max:",
+                                          value = 1, step = 0.001))
+                  ),
+                  actionButton(paste0("layer_reset_", id), "Reset to layer range",
+                               style = "font-size:10px; padding:2px 6px; margin-bottom:4px;")
+                )
+              )
+            )
+          ),
+          # Fixed color control
+          conditionalPanel(
+            condition = sprintf("input['layer_mode_%s'] == 'fixed'", id),
+            colourInput(paste0("layer_color_", id), "Color:",
+                        value = "#888888", showColour = "both")
+          )
+        )
+      }))
+    })
 
     # Generalized palette builder for any categorical variable (used by Tab 2)
     build_palette_for <- function(var_name_str) {
@@ -1434,21 +1641,27 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
 
       plot_df <- df[ord, , drop = FALSE]
 
-      # Get plot values: gene expression, multi-gene, or metadata
-      if (showing_gene()) {
-        plot_vals <- as.numeric(counts_norm[ord, mg_active()[1]])
-        color_title <- paste0(mg_active()[1], "\n(log-normalized)")
-      } else if (showing_multi_gene()) {
-        active_genes <- mg_active()
-        sub_mat <- counts_norm[ord, active_genes, drop = FALSE]
-        expressed <- Matrix::rowSums(sub_mat) > 0
-        plot_vals <- factor(ifelse(expressed, "Expressed", "Not expressed"),
-                            levels = c("Expressed", "Not expressed"))
-        color_title <- paste0("Any expressed\n(", length(active_genes), " genes)")
-      } else {
-        req(vname != "GENE_SELECTOR")
-        plot_vals <- plot_df[[vname]]
-        color_title <- vname
+      # Layer coloring mode: bypasses single-variable color logic
+      lgm <- layer_group_map()
+      layer_mode_on <- isTRUE(input$layer_mode_active) && !is.null(lgm)
+
+      # Get plot values: gene expression, multi-gene, or metadata (skipped in layer mode)
+      if (!layer_mode_on) {
+        if (showing_gene()) {
+          plot_vals <- as.numeric(counts_norm[ord, mg_active()[1]])
+          color_title <- paste0(mg_active()[1], "\n(log-normalized)")
+        } else if (showing_multi_gene()) {
+          active_genes <- mg_active()
+          sub_mat <- counts_norm[ord, active_genes, drop = FALSE]
+          expressed <- Matrix::rowSums(sub_mat) > 0
+          plot_vals <- factor(ifelse(expressed, "Expressed", "Not expressed"),
+                              levels = c("Expressed", "Not expressed"))
+          color_title <- paste0("Any expressed\n(", length(active_genes), " genes)")
+        } else {
+          req(vname != "GENE_SELECTOR")
+          plot_vals <- plot_df[[vname]]
+          color_title <- vname
+        }
       }
 
       if (polygon_mode) {
@@ -1515,41 +1728,134 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           # Filter ordered data to only visible cells
           vis_mask <- cell_ids_ordered %in% visible_cells
           vis_cell_ids <- cell_ids_ordered[vis_mask]
-          vis_plot_vals <- plot_vals[vis_mask]
-
-          # Cell type grouping: split visible cells into primary vs fixed-color
-          group_map_r <- cell_group_map()
-          if (!is.null(group_map_r)) {
-            vis_group <- group_map_r[ord][vis_mask]
-            vis_primary_mask <- vis_group == "primary"
-          } else {
-            vis_group <- NULL
-            vis_primary_mask <- rep(TRUE, length(vis_cell_ids))
-          }
-          primary_cell_ids    <- vis_cell_ids[vis_primary_mask]
-          primary_plot_vals_p <- vis_plot_vals[vis_primary_mask]
 
           p <- plot_ly(source = "spatial")
 
-          # Render fixed-color (Other/Solid) polygons first (background layer)
-          if (!is.null(vis_group) && any(!vis_primary_mask)) {
-            for (hex_col in sort(unique(vis_group[!vis_primary_mask]))) {
-              cids <- vis_cell_ids[vis_group == hex_col]
-              trace_data <- build_polygon_traces(cids)
-              if (length(trace_data$x) > 0) {
-                p <- p %>% add_trace(
-                  x = trace_data$x, y = trace_data$y,
-                  type = "scatter", mode = "lines",
-                  fill = "toself",
-                  fillcolor = adjustcolor(hex_col, alpha.f = 0.85),
+          if (layer_mode_on) {
+            # ---- LAYER MODE POLYGON RENDERING ----
+            lgm_vis   <- lgm[ord][vis_mask]
+            bg_col_lp <- if (!is.null(input$layer_bg_color)) input$layer_bg_color else "#D9D9D9"
+
+            # Background cells
+            bg_vis_lp <- lgm_vis == "background"
+            if (any(bg_vis_lp)) {
+              td <- build_polygon_traces(vis_cell_ids[bg_vis_lp])
+              if (length(td$x) > 0)
+                p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
+                  fill = "toself", fillcolor = adjustcolor(bg_col_lp, alpha.f = 0.85),
                   line = list(color = border_col, width = border_w),
-                  showlegend = FALSE, hoverinfo = "none"
-                )
+                  showlegend = FALSE, hoverinfo = "none")
+            }
+
+            # Fixed-color layer cells
+            fixed_vis_lp <- !bg_vis_lp & !startsWith(lgm_vis, "layer:")
+            for (hex_lp in sort(unique(lgm_vis[fixed_vis_lp]))) {
+              td <- build_polygon_traces(vis_cell_ids[lgm_vis == hex_lp])
+              if (length(td$x) > 0)
+                p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
+                  fill = "toself", fillcolor = adjustcolor(hex_lp, alpha.f = 0.85),
+                  line = list(color = border_col, width = border_w),
+                  showlegend = FALSE, hoverinfo = "none")
+            }
+
+            # Variable-layer cells: bin-based polygon rendering
+            lids_lp   <- layer_ids()
+            var_lids_lp <- Filter(function(id) {
+              m <- input[[paste0("layer_mode_", id)]]; is.null(m) || m == "variable"
+            }, lids_lp)
+            n_var_lp <- length(var_lids_lp)
+            vis_all_vals_by_var <- list()  # cache per variable
+
+            for (li in seq_along(var_lids_lp)) {
+              lid  <- var_lids_lp[li]
+              lmask_lp <- lgm_vis == paste0("layer:", lid)
+              if (!any(lmask_lp)) next
+              var_lp  <- input[[paste0("layer_var_", lid)]]
+              pal_lp_raw <- input[[paste0("layer_pal_", lid)]]
+              pal_lp  <- if (!is.null(pal_lp_raw) && nzchar(pal_lp_raw)) pal_lp_raw else "Inferno"
+              if (is.null(var_lp) || !var_lp %in% colnames(df)) next
+
+              layer_vis_cids_lp <- vis_cell_ids[lmask_lp]
+              layer_vis_vals_lp <- df[[var_lp]][ord][vis_mask][lmask_lp]
+
+              use_fixed_lp <- isTRUE(input[[paste0("layer_fix_", lid)]]) &&
+                !is.null(input[[paste0("layer_min_", lid)]]) &&
+                !is.null(input[[paste0("layer_max_", lid)]]) &&
+                !is.na(input[[paste0("layer_min_", lid)]]) &&
+                !is.na(input[[paste0("layer_max_", lid)]]) &&
+                input[[paste0("layer_min_", lid)]] < input[[paste0("layer_max_", lid)]]
+              vr_lp <- if (use_fixed_lp) {
+                c(input[[paste0("layer_min_", lid)]], input[[paste0("layer_max_", lid)]])
+              } else {
+                rng <- range(layer_vis_vals_lp, na.rm = TRUE)
+                if (rng[1] == rng[2]) c(rng[1] - 0.5, rng[2] + 0.5) else rng
+              }
+
+              n_bins_lp   <- 50
+              vals_cl_lp  <- pmin(pmax(layer_vis_vals_lp, vr_lp[1]), vr_lp[2])
+              bins_lp     <- as.integer(cut(vals_cl_lp, breaks = n_bins_lp, include.lowest = TRUE))
+              bins_lp[is.na(bins_lp)] <- 1L
+              pal_func_lp <- get_cont_pal_func(pal_lp)
+              bin_cols_lp <- pal_func_lp(n_bins_lp)
+
+              for (b in sort(unique(bins_lp))) {
+                td <- build_polygon_traces(layer_vis_cids_lp[bins_lp == b])
+                if (length(td$x) > 0)
+                  p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
+                    fill = "toself", fillcolor = adjustcolor(bin_cols_lp[b], alpha.f = 0.85),
+                    line = list(color = border_col, width = border_w),
+                    showlegend = FALSE, hoverinfo = "none")
+              }
+
+              # Ghost colorbar trace for this layer
+              n_bar_lp <- 20
+              bar_hex_lp <- pal_func_lp(n_bar_lp)
+              cs_lp <- lapply(seq_len(n_bar_lp), function(j) list((j-1)/(n_bar_lp-1), bar_hex_lp[j]))
+              cb_len_lp <- max(0.25, 0.9 / n_var_lp)
+              cb_y_lp   <- 1.0 - (li - 1) * (cb_len_lp + 0.05)
+              p <- p %>% add_trace(
+                x = c(0, 0), y = c(0, 0), type = "scattergl", mode = "markers",
+                marker = list(size = 0.001, opacity = 0, color = vr_lp,
+                              colorscale = cs_lp, showscale = TRUE,
+                              colorbar = list(title = var_lp,
+                                             y = cb_y_lp, len = cb_len_lp, yanchor = "top")),
+                showlegend = FALSE, hoverinfo = "none")
+            }
+
+          } else {
+            # ---- EXISTING: cell type grouping polygon rendering ----
+            vis_plot_vals <- plot_vals[vis_mask]
+            group_map_r <- cell_group_map()
+            if (!is.null(group_map_r)) {
+              vis_group <- group_map_r[ord][vis_mask]
+              vis_primary_mask <- vis_group == "primary"
+            } else {
+              vis_group <- NULL
+              vis_primary_mask <- rep(TRUE, length(vis_cell_ids))
+            }
+            primary_cell_ids    <- vis_cell_ids[vis_primary_mask]
+            primary_plot_vals_p <- vis_plot_vals[vis_primary_mask]
+
+            # Render fixed-color (Other/Solid) polygons first (background layer)
+            if (!is.null(vis_group) && any(!vis_primary_mask)) {
+              for (hex_col in sort(unique(vis_group[!vis_primary_mask]))) {
+                cids <- vis_cell_ids[vis_group == hex_col]
+                trace_data <- build_polygon_traces(cids)
+                if (length(trace_data$x) > 0) {
+                  p <- p %>% add_trace(
+                    x = trace_data$x, y = trace_data$y,
+                    type = "scatter", mode = "lines",
+                    fill = "toself",
+                    fillcolor = adjustcolor(hex_col, alpha.f = 0.85),
+                    line = list(color = border_col, width = border_w),
+                    showlegend = FALSE, hoverinfo = "none"
+                  )
+                }
               }
             }
           }
 
-          if (length(primary_cell_ids) > 0) {
+          if (!layer_mode_on && length(primary_cell_ids) > 0) {
             if (var_is_numeric()) {
               # Continuous variable: bin into color groups
               pal_name <- if (!is.null(input$cont_palette)) input$cont_palette else "Inferno"
@@ -1668,36 +1974,112 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
 
       } else {
         # ---- CENTROID RENDERING ----
-        group_map_r <- cell_group_map()
-
-        if (!is.null(group_map_r)) {
-          plot_group <- group_map_r[ord]
-          primary_mask_c <- plot_group == "primary"
-        } else {
-          plot_group <- NULL
-          primary_mask_c <- rep(TRUE, nrow(plot_df))
-        }
 
         p <- plot_ly(source = "spatial")
 
-        # Render fixed-color (Other/Solid) cells first (background layer)
-        if (!is.null(plot_group) && any(!primary_mask_c)) {
-          for (hex_col in sort(unique(plot_group[!primary_mask_c]))) {
-            idx <- which(plot_group == hex_col)
+        if (layer_mode_on) {
+          # ---- LAYER MODE CENTROID RENDERING ----
+          lgm_ord_c  <- lgm[ord]
+          bg_col_c   <- if (!is.null(input$layer_bg_color)) input$layer_bg_color else "#D9D9D9"
+
+          # Background cells
+          bg_mask_c <- lgm_ord_c == "background"
+          if (any(bg_mask_c))
             p <- p %>% add_trace(
-              x = plot_df[[coords$x]][idx],
-              y = plot_df[[coords$y]][idx],
+              x = plot_df[[coords$x]][bg_mask_c], y = plot_df[[coords$y]][bg_mask_c],
               type = "scattergl", mode = "markers",
-              marker = list(size = sz, color = hex_col),
-              showlegend = FALSE, hoverinfo = "none"
-            )
+              marker = list(size = sz, color = bg_col_c),
+              showlegend = FALSE, hoverinfo = "none")
+
+          # Fixed-color layer cells
+          fixed_mask_c <- !bg_mask_c & !startsWith(lgm_ord_c, "layer:")
+          for (hex_c in sort(unique(lgm_ord_c[fixed_mask_c]))) {
+            idx_c <- which(lgm_ord_c == hex_c)
+            p <- p %>% add_trace(
+              x = plot_df[[coords$x]][idx_c], y = plot_df[[coords$y]][idx_c],
+              type = "scattergl", mode = "markers",
+              marker = list(size = sz, color = hex_c),
+              showlegend = FALSE, hoverinfo = "none")
           }
+
+          # Variable-layer cells: one scattergl trace per layer with colorbar
+          lids_c    <- layer_ids()
+          var_lids_c <- Filter(function(id) {
+            m <- input[[paste0("layer_mode_", id)]]; is.null(m) || m == "variable"
+          }, lids_c)
+          n_var_c <- length(var_lids_c)
+
+          for (li in seq_along(var_lids_c)) {
+            lid  <- var_lids_c[li]
+            lmask_c <- lgm_ord_c == paste0("layer:", lid)
+            if (!any(lmask_c)) next
+            var_c  <- input[[paste0("layer_var_", lid)]]
+            pal_c_raw <- input[[paste0("layer_pal_", lid)]]
+            pal_c  <- if (!is.null(pal_c_raw) && nzchar(pal_c_raw)) pal_c_raw else "Inferno"
+            if (is.null(var_c) || !var_c %in% colnames(df)) next
+
+            layer_vals_c <- df[[var_c]][ord][lmask_c]
+
+            use_fixed_c <- isTRUE(input[[paste0("layer_fix_", lid)]]) &&
+              !is.null(input[[paste0("layer_min_", lid)]]) &&
+              !is.null(input[[paste0("layer_max_", lid)]]) &&
+              !is.na(input[[paste0("layer_min_", lid)]]) &&
+              !is.na(input[[paste0("layer_max_", lid)]]) &&
+              input[[paste0("layer_min_", lid)]] < input[[paste0("layer_max_", lid)]]
+            vr_c <- if (use_fixed_c) {
+              c(input[[paste0("layer_min_", lid)]], input[[paste0("layer_max_", lid)]])
+            } else {
+              rng <- range(layer_vals_c, na.rm = TRUE)
+              if (rng[1] == rng[2]) c(rng[1] - 0.5, rng[2] + 0.5) else rng
+            }
+
+            n_bar_c  <- 20
+            pal_hex_c <- get_cont_pal_func(pal_c)(n_bar_c)
+            cs_c <- lapply(seq_len(n_bar_c), function(j) list((j-1)/(n_bar_c-1), pal_hex_c[j]))
+            cb_len_c <- max(0.25, 0.9 / n_var_c)
+            cb_y_c   <- 1.0 - (li - 1) * (cb_len_c + 0.05)
+
+            p <- p %>% add_trace(
+              x = plot_df[[coords$x]][lmask_c], y = plot_df[[coords$y]][lmask_c],
+              type = "scattergl", mode = "markers",
+              marker = list(size = sz, color = layer_vals_c,
+                            colorscale = cs_c, cmin = vr_c[1], cmax = vr_c[2],
+                            colorbar = list(title = var_c,
+                                            y = cb_y_c, len = cb_len_c, yanchor = "top")),
+              hoverinfo = "none")
+          }
+
+        } else {
+          # ---- EXISTING: cell type grouping centroid rendering ----
+          group_map_r <- cell_group_map()
+
+          if (!is.null(group_map_r)) {
+            plot_group <- group_map_r[ord]
+            primary_mask_c <- plot_group == "primary"
+          } else {
+            plot_group <- NULL
+            primary_mask_c <- rep(TRUE, nrow(plot_df))
+          }
+
+          # Render fixed-color (Other/Solid) cells first (background layer)
+          if (!is.null(plot_group) && any(!primary_mask_c)) {
+            for (hex_col in sort(unique(plot_group[!primary_mask_c]))) {
+              idx <- which(plot_group == hex_col)
+              p <- p %>% add_trace(
+                x = plot_df[[coords$x]][idx],
+                y = plot_df[[coords$y]][idx],
+                type = "scattergl", mode = "markers",
+                marker = list(size = sz, color = hex_col),
+                showlegend = FALSE, hoverinfo = "none"
+              )
+            }
+          }
+
+          primary_plot_df    <- plot_df[primary_mask_c, , drop = FALSE]
+          primary_plot_vals_c <- plot_vals[primary_mask_c]
         }
 
-        primary_plot_df    <- plot_df[primary_mask_c, , drop = FALSE]
-        primary_plot_vals_c <- plot_vals[primary_mask_c]
-
-        if (nrow(primary_plot_df) > 0) {
+        if (!layer_mode_on && nrow(primary_plot_df) > 0) {
           if (var_is_numeric()) {
             pal_name <- if (!is.null(input$cont_palette)) input$cont_palette else "Inferno"
             n_bar <- 20

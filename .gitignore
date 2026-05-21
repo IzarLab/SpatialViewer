@@ -13,3 +13,6 @@
 *.zip
 /doc/
 /Meta/
+
+# Claude Code context file
+CLAUDE.md
