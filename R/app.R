@@ -1986,11 +1986,13 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                     )
                   }
                 }
-                # Ghost marker — clean filled-square legend icon, no black border
+                # Ghost marker — clean filled-square legend icon, no black border.
+                # opacity omitted so the legend icon renders at full color;
+                # size = 0.001 makes the actual dot sub-pixel invisible.
                 p <- p %>% add_trace(
                   x = ghost_x, y = ghost_y,
                   type = "scattergl", mode = "markers",
-                  marker = list(size = 0.001, opacity = 0,
+                  marker = list(size = 0.001,
                                 color = adjustcolor(pal[highlight], alpha.f = 0.85),
                                 symbol = "square", line = list(width = 0)),
                   name = highlight, showlegend = TRUE, hoverinfo = "none"
@@ -2011,14 +2013,13 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                     )
                   }
                 }
-                # Ghost scattergl markers — real coords at opacity=0 so Plotly
-                # registers the legend entry; no legendgroup to prevent combining
-                # their icon with the polygon line trace.
+                # Ghost scattergl markers for legend icons. opacity omitted so
+                # legend shows full color; size = 0.001 hides the dot on the plot.
                 for (lvl in levels(fvals)) {
                   p <- p %>% add_trace(
                     x = ghost_x, y = ghost_y,
                     type = "scattergl", mode = "markers",
-                    marker = list(size = 0.001, opacity = 0,
+                    marker = list(size = 0.001,
                                   color = adjustcolor(pal[lvl], alpha.f = 0.85),
                                   symbol = "square", line = list(width = 0)),
                     name = lvl, showlegend = TRUE, hoverinfo = "none"
