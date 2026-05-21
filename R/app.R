@@ -468,6 +468,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           uiOutput("point_size_ui"),
           uiOutput("polygon_controls_ui"),
           uiOutput("shuffle_ui"),
+          checkboxInput("show_hover", "Enable hover labels", value = FALSE),
           uiOutput("layer_coloring_ui")
         ),
         # Tab 2 controls (Summary Statistics)
@@ -1670,6 +1671,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       ord <- row_order()
       sz <- isolate(input$point_size)
       polygon_mode <- in_polygon_mode()
+      hover_on     <- isTRUE(input$show_hover)
 
       plot_df <- df[ord, , drop = FALSE]
 
@@ -1958,6 +1960,13 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
               fvals <- factor(primary_plot_vals_p, levels = present_lvls)
               highlight <- if (!is.null(input$highlight_val)) input$highlight_val else "None"
 
+              # Invisible anchor point for ghost legend traces. Must be a real
+              # coordinate within the polygon range (NA suppresses the legend
+              # entry in Plotly). The point is rendered at opacity=0, size=0.001
+              # — same technique used for the colorbar ghost trace.
+              ghost_x <- poly_centroids$cx[1]
+              ghost_y <- poly_centroids$cy[1]
+
               if (highlight != "None" && highlight %in% levels(fvals)) {
                 for (lvl in levels(fvals)) {
                   idx <- which(fvals == lvl)
@@ -1968,24 +1977,23 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                     alpha    <- if (is_highlight) 0.85 else 0.15
                     fill_col <- adjustcolor(pal[lvl], alpha.f = alpha)
                     line_col <- if (is_highlight) border_col else adjustcolor(border_col, alpha.f = 0.15)
-                    lg       <- if (is_highlight) lvl else "Other"
                     p <- p %>% add_trace(
                       x = trace_data$x, y = trace_data$y,
                       type = "scatter", mode = "lines",
                       fill = "toself", fillcolor = fill_col,
                       line = list(color = line_col, width = border_w),
-                      legendgroup = lg, showlegend = FALSE, hoverinfo = "none"
+                      showlegend = FALSE, hoverinfo = "none"
                     )
                   }
                 }
-                # Ghost trace for clean legend icon (fill square, no border)
+                # Ghost marker — clean filled-square legend icon, no black border
                 p <- p %>% add_trace(
-                  x = NA_real_, y = NA_real_,
+                  x = ghost_x, y = ghost_y,
                   type = "scattergl", mode = "markers",
-                  marker = list(size = 12, color = adjustcolor(pal[highlight], alpha.f = 0.85),
-                                symbol = "square"),
-                  legendgroup = highlight, name = highlight,
-                  showlegend = TRUE, hoverinfo = "none"
+                  marker = list(size = 0.001, opacity = 0,
+                                color = adjustcolor(pal[highlight], alpha.f = 0.85),
+                                symbol = "square", line = list(width = 0)),
+                  name = highlight, showlegend = TRUE, hoverinfo = "none"
                 )
               } else {
                 for (lvl in levels(fvals)) {
@@ -1999,20 +2007,21 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                       fill = "toself",
                       fillcolor = adjustcolor(pal[lvl], alpha.f = 0.85),
                       line = list(color = border_col, width = border_w),
-                      legendgroup = lvl, showlegend = FALSE, hoverinfo = "none"
+                      showlegend = FALSE, hoverinfo = "none"
                     )
                   }
                 }
-                # Ghost scattergl traces so the legend shows a solid fill square
-                # instead of a line-with-border icon from the polygon traces above.
+                # Ghost scattergl markers — real coords at opacity=0 so Plotly
+                # registers the legend entry; no legendgroup to prevent combining
+                # their icon with the polygon line trace.
                 for (lvl in levels(fvals)) {
                   p <- p %>% add_trace(
-                    x = NA_real_, y = NA_real_,
+                    x = ghost_x, y = ghost_y,
                     type = "scattergl", mode = "markers",
-                    marker = list(size = 12, color = adjustcolor(pal[lvl], alpha.f = 0.85),
-                                  symbol = "square"),
-                    legendgroup = lvl, name = lvl,
-                    showlegend = TRUE, hoverinfo = "none"
+                    marker = list(size = 0.001, opacity = 0,
+                                  color = adjustcolor(pal[lvl], alpha.f = 0.85),
+                                  symbol = "square", line = list(width = 0)),
+                    name = lvl, showlegend = TRUE, hoverinfo = "none"
                   )
                 }
               }
@@ -2156,7 +2165,9 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
               y = primary_plot_df[[coords$y]],
               type = "scattergl", mode = "markers",
               marker = marker_list,
-              hoverinfo = "none"
+              text = if (hover_on) paste0(color_title, ": ", round(primary_plot_vals_c, 4)) else NULL,
+              hovertemplate = if (hover_on) "%{text}<extra></extra>" else NULL,
+              hoverinfo = if (hover_on) "text" else "none"
             )
           } else {
             pal <- get_cat_palette()
@@ -2176,14 +2187,20 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   marker = list(size = sz,
                                 color = as.character(pal[as.character(fvals[bg_idx])]),
                                 opacity = 0.2),
-                  name = "Other", hoverinfo = "none"
+                  text = if (hover_on) as.character(fvals[bg_idx]) else NULL,
+                  hovertemplate = if (hover_on) "%{text}<extra></extra>" else NULL,
+                  hoverinfo = if (hover_on) "text" else "none",
+                  name = "Other"
                 ) %>%
                 add_trace(
                   x = primary_plot_df[[coords$x]][fg_idx],
                   y = primary_plot_df[[coords$y]][fg_idx],
                   type = "scattergl", mode = "markers",
                   marker = list(size = sz, color = pal[highlight], opacity = 1.0),
-                  name = highlight, hoverinfo = "none"
+                  text = if (hover_on) rep(highlight, length(fg_idx)) else NULL,
+                  hovertemplate = if (hover_on) "%{text}<extra></extra>" else NULL,
+                  hoverinfo = if (hover_on) "text" else "none",
+                  name = highlight
                 )
             } else {
               point_colors <- as.character(pal[as.character(fvals)])
@@ -2192,7 +2209,10 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                 y = primary_plot_df[[coords$y]],
                 type = "scattergl", mode = "markers",
                 marker = list(size = sz, color = point_colors),
-                hoverinfo = "none", showlegend = FALSE
+                text = if (hover_on) as.character(fvals) else NULL,
+                hovertemplate = if (hover_on) "%{text}<extra></extra>" else NULL,
+                hoverinfo = if (hover_on) "text" else "none",
+                showlegend = FALSE
               )
               for (lvl in levels(fvals)) {
                 p <- p %>% add_trace(
