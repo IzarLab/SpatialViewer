@@ -776,6 +776,16 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
     layer_ids    <- reactiveVal(character(0))  # ordered vector of active layer ID strings
     layer_id_ctr <- reactiveVal(0L)            # monotonically increasing, never reused
 
+    # Mutual exclusion: enabling one coloring mode disables the other
+    observeEvent(input$layer_mode_active, {
+      if (isTRUE(input$layer_mode_active) && isTRUE(input$group_mode))
+        updateCheckboxInput(session, "group_mode", value = FALSE)
+    }, ignoreInit = TRUE)
+    observeEvent(input$group_mode, {
+      if (isTRUE(input$group_mode) && isTRUE(input$layer_mode_active))
+        updateCheckboxInput(session, "layer_mode_active", value = FALSE)
+    }, ignoreInit = TRUE)
+
     # Reset zoom and dragmode when switching coordinate systems or display mode
     observeEvent(input$coord_type, {
       zoom_state(NULL)
@@ -1083,14 +1093,18 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       layer_ids(setdiff(layer_ids(), id))
     })
 
-    # Populate cell-type selectize for all layers when column or layer list changes
+    # Populate cell-type selectize for all layers when column or layer list changes.
+    # Pass current selection back so existing layers keep their chosen types after
+    # a re-render triggered by adding/removing a layer.
     observeEvent(list(layer_ids(), input$layer_group_col), {
       col <- input$layer_group_col
       if (is.null(col) || !nzchar(col) || !col %in% colnames(df)) return()
       choices <- sort(unique(as.character(df[[col]])))
       for (id in layer_ids()) {
         updateSelectizeInput(session, paste0("layer_types_", id),
-                             choices = choices, server = TRUE)
+                             choices  = choices,
+                             selected = isolate(input[[paste0("layer_types_", id)]]),
+                             server   = TRUE)
       }
     })
 
@@ -1198,6 +1212,17 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       tagList(lapply(seq_along(ids), function(i) {
         id <- ids[i]
         safe_id <- gsub("'", "\\\\'", id)
+
+        # Read current values so re-renders (e.g. when adding a new layer) don't
+        # reset existing cards to their defaults.
+        cur_mode  <- isolate(input[[paste0("layer_mode_",  id)]])
+        cur_var   <- isolate(input[[paste0("layer_var_",   id)]])
+        cur_pal   <- isolate(input[[paste0("layer_pal_",   id)]])
+        cur_fix   <- isolate(input[[paste0("layer_fix_",   id)]])
+        cur_min   <- isolate(input[[paste0("layer_min_",   id)]])
+        cur_max   <- isolate(input[[paste0("layer_max_",   id)]])
+        cur_color <- isolate(input[[paste0("layer_color_", id)]])
+
         tags$div(
           style = paste0("border:1px solid #ddd; border-radius:4px; ",
                          "padding:8px; margin-bottom:6px; background:#fafafa;"),
@@ -1212,7 +1237,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                      safe_id),
                    HTML("&times;"))
           ),
-          # Cell types selectize
+          # Cell types selectize (choices restored via updateSelectizeInput observer)
           selectizeInput(paste0("layer_types_", id), "Cell types:",
                          choices  = NULL,
                          multiple = TRUE,
@@ -1222,29 +1247,35 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           # Mode: Variable vs Fixed
           radioButtons(paste0("layer_mode_", id), NULL,
                        choices  = c("Variable" = "variable", "Fixed color" = "fixed"),
-                       selected = "variable",
+                       selected = if (!is.null(cur_mode)) cur_mode else "variable",
                        inline   = TRUE),
           # Variable controls
           conditionalPanel(
             condition = sprintf("input['layer_mode_%s'] == 'variable'", id),
             selectInput(paste0("layer_var_", id), "Color by:",
                         choices  = if (length(continuous_meta_vars) > 0) continuous_meta_vars
-                                   else c("(no numeric columns)" = "")),
-            selectInput(paste0("layer_pal_", id), "Palette:", choices = cont_choices),
+                                   else c("(no numeric columns)" = ""),
+                        selected = cur_var),
+            selectInput(paste0("layer_pal_", id), "Palette:",
+                        choices  = cont_choices,
+                        selected = cur_pal),
             # Scale range (collapsible)
             tags$details(
               tags$summary(style = "cursor:pointer; font-size:11px; color:#666; margin-bottom:4px;",
                            "Scale range"),
               tags$div(
                 style = "padding:4px 0;",
-                checkboxInput(paste0("layer_fix_", id), "Fix scale", value = FALSE),
+                checkboxInput(paste0("layer_fix_", id), "Fix scale",
+                              value = isTRUE(cur_fix)),
                 conditionalPanel(
                   condition = sprintf("input['layer_fix_%s'] == true", id),
                   fluidRow(
                     column(5, numericInput(paste0("layer_min_", id), "Min:",
-                                          value = 0, step = 0.001)),
+                                          value = if (!is.null(cur_min)) cur_min else 0,
+                                          step = 0.001)),
                     column(5, numericInput(paste0("layer_max_", id), "Max:",
-                                          value = 1, step = 0.001))
+                                          value = if (!is.null(cur_max)) cur_max else 1,
+                                          step = 0.001))
                   ),
                   actionButton(paste0("layer_reset_", id), "Reset to layer range",
                                style = "font-size:10px; padding:2px 6px; margin-bottom:4px;")
@@ -1256,7 +1287,8 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           conditionalPanel(
             condition = sprintf("input['layer_mode_%s'] == 'fixed'", id),
             colourInput(paste0("layer_color_", id), "Color:",
-                        value = "#888888", showColour = "both")
+                        value = if (!is.null(cur_color)) cur_color else "#888888",
+                        showColour = "both")
           )
         )
       }))
@@ -1933,19 +1965,28 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   trace_data <- build_polygon_traces(cids)
                   if (length(trace_data$x) > 0) {
                     is_highlight <- (lvl == highlight)
-                    alpha <- if (is_highlight) 0.85 else 0.15
+                    alpha    <- if (is_highlight) 0.85 else 0.15
                     fill_col <- adjustcolor(pal[lvl], alpha.f = alpha)
                     line_col <- if (is_highlight) border_col else adjustcolor(border_col, alpha.f = 0.15)
+                    lg       <- if (is_highlight) lvl else "Other"
                     p <- p %>% add_trace(
                       x = trace_data$x, y = trace_data$y,
                       type = "scatter", mode = "lines",
                       fill = "toself", fillcolor = fill_col,
                       line = list(color = line_col, width = border_w),
-                      name = if (is_highlight) lvl else "Other",
-                      showlegend = is_highlight, hoverinfo = "none"
+                      legendgroup = lg, showlegend = FALSE, hoverinfo = "none"
                     )
                   }
                 }
+                # Ghost trace for clean legend icon (fill square, no border)
+                p <- p %>% add_trace(
+                  x = NA_real_, y = NA_real_,
+                  type = "scattergl", mode = "markers",
+                  marker = list(size = 12, color = adjustcolor(pal[highlight], alpha.f = 0.85),
+                                symbol = "square"),
+                  legendgroup = highlight, name = highlight,
+                  showlegend = TRUE, hoverinfo = "none"
+                )
               } else {
                 for (lvl in levels(fvals)) {
                   idx <- which(fvals == lvl)
@@ -1958,9 +1999,21 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                       fill = "toself",
                       fillcolor = adjustcolor(pal[lvl], alpha.f = 0.85),
                       line = list(color = border_col, width = border_w),
-                      name = lvl, hoverinfo = "none"
+                      legendgroup = lvl, showlegend = FALSE, hoverinfo = "none"
                     )
                   }
+                }
+                # Ghost scattergl traces so the legend shows a solid fill square
+                # instead of a line-with-border icon from the polygon traces above.
+                for (lvl in levels(fvals)) {
+                  p <- p %>% add_trace(
+                    x = NA_real_, y = NA_real_,
+                    type = "scattergl", mode = "markers",
+                    marker = list(size = 12, color = adjustcolor(pal[lvl], alpha.f = 0.85),
+                                  symbol = "square"),
+                    legendgroup = lvl, name = lvl,
+                    showlegend = TRUE, hoverinfo = "none"
+                  )
                 }
               }
             }
