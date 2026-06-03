@@ -1196,7 +1196,9 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
             tags$div(
               style = "display:flex; align-items:center; gap:4px;",
               tags$span(style = "font-size:11px; color:#555;", "Background:"),
-              colourInput("layer_bg_color", NULL, value = "#D9D9D9", showColour = "both")
+              colourInput("layer_bg_color", NULL, value = "#D9D9D9", showColour = "both"),
+              tags$span(style = "font-size:11px; color:#555; margin-left:6px;", "Border:"),
+              colourInput("layer_bg_border_color", NULL, value = "#808080", showColour = "both")
             )
           )
         )
@@ -1222,7 +1224,8 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
         cur_fix   <- isolate(input[[paste0("layer_fix_",   id)]])
         cur_min   <- isolate(input[[paste0("layer_min_",   id)]])
         cur_max   <- isolate(input[[paste0("layer_max_",   id)]])
-        cur_color <- isolate(input[[paste0("layer_color_", id)]])
+        cur_color  <- isolate(input[[paste0("layer_color_",  id)]])
+        cur_border <- isolate(input[[paste0("layer_border_", id)]])
 
         tags$div(
           style = paste0("border:1px solid #ddd; border-radius:4px; ",
@@ -1289,6 +1292,14 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
             condition = sprintf("input['layer_mode_%s'] == 'fixed'", id),
             colourInput(paste0("layer_color_", id), "Color:",
                         value = if (!is.null(cur_color)) cur_color else "#888888",
+                        showColour = "both")
+          ),
+          # Boundary color (polygon mode)
+          tags$div(
+            style = "display:flex; align-items:center; gap:4px; margin-top:4px;",
+            tags$span(style = "font-size:11px; color:#555;", "Boundary color:"),
+            colourInput(paste0("layer_border_", id), NULL,
+                        value = if (!is.null(cur_border)) cur_border else "#000000",
                         showColour = "both")
           )
         )
@@ -1768,7 +1779,8 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           if (layer_mode_on) {
             # ---- LAYER MODE POLYGON RENDERING ----
             lgm_vis   <- lgm[ord][vis_mask]
-            bg_col_lp <- if (!is.null(input$layer_bg_color)) input$layer_bg_color else "#D9D9D9"
+            bg_col_lp     <- if (!is.null(input$layer_bg_color))        input$layer_bg_color        else "#D9D9D9"
+            bg_border_lp  <- if (!is.null(input$layer_bg_border_color)) input$layer_bg_border_color else border_col
 
             # Background cells
             bg_vis_lp <- lgm_vis == "background"
@@ -1777,18 +1789,28 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
               if (length(td$x) > 0)
                 p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
                   fill = "toself", fillcolor = adjustcolor(bg_col_lp, alpha.f = 0.85),
-                  line = list(color = border_col, width = border_w),
+                  line = list(color = bg_border_lp, width = border_w),
                   showlegend = FALSE, hoverinfo = "none")
             }
 
             # Fixed-color layer cells
             fixed_vis_lp <- !bg_vis_lp & !startsWith(lgm_vis, "layer:")
             for (hex_lp in sort(unique(lgm_vis[fixed_vis_lp]))) {
+              # Recover the layer id for this fixed color to look up its border color
+              fixed_lid_lp <- Filter(function(id) {
+                lm <- input[[paste0("layer_mode_", id)]]
+                lc <- input[[paste0("layer_color_", id)]]
+                isTRUE(lm == "fixed") && !is.null(lc) && tolower(lc) == tolower(hex_lp)
+              }, layer_ids())
+              fx_border_lp <- if (length(fixed_lid_lp) > 0) {
+                b <- input[[paste0("layer_border_", fixed_lid_lp[1])]]
+                if (!is.null(b) && nzchar(b)) b else border_col
+              } else border_col
               td <- build_polygon_traces(vis_cell_ids[lgm_vis == hex_lp])
               if (length(td$x) > 0)
                 p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
                   fill = "toself", fillcolor = adjustcolor(hex_lp, alpha.f = 0.85),
-                  line = list(color = border_col, width = border_w),
+                  line = list(color = fx_border_lp, width = border_w),
                   showlegend = FALSE, hoverinfo = "none")
             }
 
@@ -1802,6 +1824,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
 
             for (li in seq_along(var_lids_lp)) {
               lid  <- var_lids_lp[li]
+              lid_border_lp <- { b <- input[[paste0("layer_border_", lid)]]; if (!is.null(b) && nzchar(b)) b else border_col }
               lmask_lp <- lgm_vis == paste0("layer:", lid)
               if (!any(lmask_lp)) next
               var_lp  <- input[[paste0("layer_var_", lid)]]
@@ -1837,7 +1860,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                 if (length(td$x) > 0)
                   p <- p %>% add_trace(x = td$x, y = td$y, type = "scatter", mode = "lines",
                     fill = "toself", fillcolor = adjustcolor(bin_cols_lp[b], alpha.f = 0.85),
-                    line = list(color = border_col, width = border_w),
+                    line = list(color = lid_border_lp, width = border_w),
                     showlegend = FALSE, hoverinfo = "none")
               }
 

@@ -42,7 +42,7 @@ launch_spatial_viewer("path/to/your_seurat_object.rds")
 - **Coordinate system**: Toggle between physical slide coordinates (X/Y) and a dimensionality reduction embedding (e.g. UMAP).
 - **Display mode**: Show cells as centroids (points) or as polygon boundaries (when a polygon file is provided).
 - **Cell type grouping**: Pin selected cell types to a fixed color while others are colored by the active variable.
-- **Layer coloring**: Assign a different continuous variable (or fixed color) to each cell type group simultaneously — e.g. color T cells by activation score and tumor cells by IFN-γ response in the same view. Each layer supports its own palette and optional scale lock. Works in both centroid and polygon display modes.
+- **Layer coloring**: Assign a different continuous variable (or fixed color) to each cell type group simultaneously — e.g. color T cells by activation score and tumor cells by IFN-γ response in the same view. Each layer supports its own palette, optional scale lock, and (in polygon mode) an independent **boundary color**, so populations can be distinguished by both fill gradient and border hue. Background cells have separate fill and border color controls.
 - **Color scale lock**: Fix the color scale to a specific range for cross-variable comparisons.
 - **Multi-gene mode**: Select multiple genes and color cells by "any expressed" (binary).
 
