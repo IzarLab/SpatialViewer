@@ -29,6 +29,10 @@
 #'   `cell` column in the polygon file. Default: `NULL`.
 #' @param celltype_col Character or `NULL`. Metadata column pre-selected for
 #'   cell type grouping in the UI. Default: `NULL`.
+#' @param microns_per_pixel Numeric or `NULL`. Conversion factor from coordinate
+#'   units to micrometres (e.g. `0.12` for CosMX Bruker pixel coordinates).
+#'   Used to label the scale bar in µm/mm. If `NULL` the scale bar is labelled
+#'   in raw coordinate units. Default: `NULL`.
 #'
 #' @return Called for its side effect: launches a blocking Shiny application.
 #'
@@ -51,18 +55,19 @@
 #' }
 #'
 #' @export
-launch_spatial_viewer <- function(seurat_path      = NULL,
-                                  exclude_vars     = NULL,
-                                  exclude_patterns = NULL,
-                                  x_col            = NULL,
-                                  y_col            = NULL,
-                                  reduction        = NULL,
-                                  assay            = NULL,
-                                  continuous_pals  = NULL,
-                                  polygon_path     = NULL,
-                                  cell_id_col      = NULL,
-                                  celltype_col     = NULL,
-                                  config_path      = if (file.exists("config.R")) "config.R" else NULL) {
+launch_spatial_viewer <- function(seurat_path        = NULL,
+                                  exclude_vars       = NULL,
+                                  exclude_patterns   = NULL,
+                                  x_col              = NULL,
+                                  y_col              = NULL,
+                                  reduction          = NULL,
+                                  assay              = NULL,
+                                  continuous_pals    = NULL,
+                                  polygon_path       = NULL,
+                                  cell_id_col        = NULL,
+                                  celltype_col       = NULL,
+                                  microns_per_pixel  = NULL,
+                                  config_path        = if (file.exists("config.R")) "config.R" else NULL) {
   library(shiny)
   library(plotly)
   library(RColorBrewer)
@@ -469,7 +474,51 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
           uiOutput("polygon_controls_ui"),
           uiOutput("shuffle_ui"),
           checkboxInput("show_hover", "Enable hover labels", value = FALSE),
-          uiOutput("layer_coloring_ui")
+          uiOutput("layer_coloring_ui"),
+          # Display / Export Options (collapsed)
+          tags$hr(),
+          tags$details(
+            class = "file-picker-section",
+            tags$summary(icon("caret-right"), tags$strong("Display / Export Options")),
+            tags$div(
+              style = "padding: 8px 0 4px 0;",
+              radioButtons("legend_orient", "Legend position:",
+                choices = c("Right (vertical)" = "v", "Bottom (horizontal)" = "h"),
+                selected = "v", inline = TRUE
+              ),
+              tags$hr(style = "margin: 6px 0;"),
+              checkboxInput("show_scale_bar", "Show scale bar", value = FALSE),
+              conditionalPanel(
+                condition = "input.show_scale_bar == true",
+                tags$div(
+                  style = "padding-left: 8px; margin-top: 4px;",
+                  selectInput("scale_bar_placement", "Placement:",
+                    choices  = c("Bottom-left"  = "bl", "Bottom-right" = "br",
+                                 "Top-left"     = "tl", "Top-right"    = "tr"),
+                    selected = "bl"),
+                  radioButtons("scale_bar_text_pos", "Label position:",
+                    choices  = c("Above bar" = "above", "Below bar" = "below"),
+                    selected = "above", inline = TRUE),
+                  colourInput("scale_bar_color", "Color:", value = "#000000",
+                    showColour = "both"),
+                  selectInput("scale_bar_unit", "Unit:",
+                    choices  = c("Auto" = "auto", "mm" = "mm", "µm" = "um",
+                                 "px" = "px", "No unit" = "none"),
+                    selected = "auto"),
+                  tags$hr(style = "margin: 6px 0;"),
+                  numericInput("scale_bar_mpp", "µm per pixel (AtoMx default: 0.12028):",
+                    value = if (!is.null(microns_per_pixel)) microns_per_pixel else 0.12028,
+                    min = 0, step = 0.001),
+                  tags$hr(style = "margin: 6px 0;"),
+                  numericInput("scale_bar_max_len",
+                    "Override bar length (in selected unit, NA = auto):",
+                    value = NA, min = 0)
+                )
+              ),
+              tags$hr(style = "margin: 6px 0;"),
+              uiOutput("label_overrides_ui")
+            )
+          )
         ),
         # Tab 2 controls (Summary Statistics)
         conditionalPanel(
@@ -881,6 +930,44 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
         if (!is.null(val)) pal[lvls[i]] <- val
       }
       pal
+    }
+
+    # --- Feature: Legend label overrides ---
+
+    output$label_overrides_ui <- renderUI({
+      if (var_is_numeric() || showing_gene() || showing_multi_gene()) return(NULL)
+      lvls <- sort(unique(as.character(df[[var_name()]])))
+      if (length(lvls) == 0) return(NULL)
+      tagList(
+        tags$strong("Legend labels:"),
+        tags$p(style = "font-size: 0.85em; color: #666; margin: 2px 0 6px;",
+               "Leave blank to keep original."),
+        lapply(seq_along(lvls), function(i) {
+          textInput(
+            inputId   = paste0("lbl_", i),
+            label     = lvls[i],
+            value     = "",
+            placeholder = lvls[i]
+          )
+        })
+      )
+    })
+
+    label_map <- reactive({
+      if (var_is_numeric() || showing_multi_gene()) return(NULL)
+      lvls <- sort(unique(as.character(df[[var_name()]])))
+      if (length(lvls) == 0) return(NULL)
+      lm <- setNames(lvls, lvls)
+      for (i in seq_along(lvls)) {
+        val <- trimws(input[[paste0("lbl_", i)]])
+        if (!is.null(val) && nzchar(val)) lm[lvls[i]] <- val
+      }
+      lm
+    })
+
+    display_label <- function(lvl) {
+      lm <- label_map()
+      if (!is.null(lm) && lvl %in% names(lm)) lm[[lvl]] else lvl
     }
 
     # --- Feature: Fixed color scale ---
@@ -1683,6 +1770,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
       sz <- isolate(input$point_size)
       polygon_mode <- in_polygon_mode()
       hover_on     <- isTRUE(input$show_hover)
+      legend_orient <- if (!is.null(input$legend_orient)) input$legend_orient else "v"
 
       plot_df <- df[ord, , drop = FALSE]
 
@@ -1868,14 +1956,20 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
               n_bar_lp <- 20
               bar_hex_lp <- pal_func_lp(n_bar_lp)
               cs_lp <- lapply(seq_len(n_bar_lp), function(j) list((j-1)/(n_bar_lp-1), bar_hex_lp[j]))
-              cb_len_lp <- max(0.25, 0.9 / n_var_lp)
-              cb_y_lp   <- 1.0 - (li - 1) * (cb_len_lp + 0.05)
+              if (legend_orient == "h") {
+                cb_lp <- list(title = var_lp, orientation = "h",
+                              x = (li - 1) * 0.35, xanchor = "left",
+                              y = -0.15, yanchor = "top", len = 0.3, thickness = 15)
+              } else {
+                cb_len_lp <- max(0.25, 0.9 / n_var_lp)
+                cb_y_lp   <- 1.0 - (li - 1) * (cb_len_lp + 0.05)
+                cb_lp <- list(title = var_lp, y = cb_y_lp, len = cb_len_lp, yanchor = "top")
+              }
               p <- p %>% add_trace(
                 x = c(0, 0), y = c(0, 0), type = "scattergl", mode = "markers",
                 marker = list(size = 0.001, opacity = 0, color = vr_lp,
                               colorscale = cs_lp, showscale = TRUE,
-                              colorbar = list(title = var_lp,
-                                             y = cb_y_lp, len = cb_len_lp, yanchor = "top")),
+                              colorbar = cb_lp),
                 showlegend = FALSE, hoverinfo = "none")
             }
 
@@ -1970,7 +2064,12 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   size = 0.001, opacity = 0,
                   color = val_range,
                   colorscale = colorscale_bar,
-                  colorbar = list(title = color_title),
+                  colorbar = if (legend_orient == "h")
+                    list(title = color_title, orientation = "h",
+                         x = 0, xanchor = "left", y = -0.15, yanchor = "top",
+                         len = 0.5, thickness = 15)
+                  else
+                    list(title = color_title),
                   showscale = TRUE
                 ),
                 showlegend = FALSE, hoverinfo = "none"
@@ -2018,7 +2117,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   marker = list(size = 0.001,
                                 color = adjustcolor(pal[highlight], alpha.f = 0.85),
                                 symbol = "square", line = list(width = 0)),
-                  name = highlight, showlegend = TRUE, hoverinfo = "none"
+                  name = display_label(highlight), showlegend = TRUE, hoverinfo = "none"
                 )
               } else {
                 for (lvl in levels(fvals)) {
@@ -2045,7 +2144,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                     marker = list(size = 0.001,
                                   color = adjustcolor(pal[lvl], alpha.f = 0.85),
                                   symbol = "square", line = list(width = 0)),
-                    name = lvl, showlegend = TRUE, hoverinfo = "none"
+                    name = display_label(lvl), showlegend = TRUE, hoverinfo = "none"
                   )
                 }
               }
@@ -2122,16 +2221,22 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
             n_bar_c  <- 20
             pal_hex_c <- get_cont_pal_func(pal_c)(n_bar_c)
             cs_c <- lapply(seq_len(n_bar_c), function(j) list((j-1)/(n_bar_c-1), pal_hex_c[j]))
-            cb_len_c <- max(0.25, 0.9 / n_var_c)
-            cb_y_c   <- 1.0 - (li - 1) * (cb_len_c + 0.05)
+            if (legend_orient == "h") {
+              cb_c <- list(title = var_c, orientation = "h",
+                           x = (li - 1) * 0.35, xanchor = "left",
+                           y = -0.15, yanchor = "top", len = 0.3, thickness = 15)
+            } else {
+              cb_len_c <- max(0.25, 0.9 / n_var_c)
+              cb_y_c   <- 1.0 - (li - 1) * (cb_len_c + 0.05)
+              cb_c <- list(title = var_c, y = cb_y_c, len = cb_len_c, yanchor = "top")
+            }
 
             p <- p %>% add_trace(
               x = plot_df[[coords$x]][lmask_c], y = plot_df[[coords$y]][lmask_c],
               type = "scattergl", mode = "markers",
               marker = list(size = sz, color = layer_vals_c,
                             colorscale = cs_c, cmin = vr_c[1], cmax = vr_c[2],
-                            colorbar = list(title = var_c,
-                                            y = cb_y_c, len = cb_len_c, yanchor = "top")),
+                            colorbar = cb_c),
               hoverinfo = "none")
           }
 
@@ -2176,7 +2281,12 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
               size = sz,
               color = primary_plot_vals_c,
               colorscale = cent_colorscale,
-              colorbar = list(title = color_title)
+              colorbar = if (legend_orient == "h")
+                list(title = color_title, orientation = "h",
+                     x = 0, xanchor = "left", y = -0.15, yanchor = "top",
+                     len = 0.5, thickness = 15)
+              else
+                list(title = color_title)
             )
             if (isTRUE(input$scale_lock) &&
                 !is.null(input$scale_min) && !is.null(input$scale_max) &&
@@ -2224,7 +2334,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   text = if (hover_on) rep(highlight, length(fg_idx)) else NULL,
                   hovertemplate = if (hover_on) "%{text}<extra></extra>" else NULL,
                   hoverinfo = if (hover_on) "text" else "none",
-                  name = highlight
+                  name = display_label(highlight)
                 )
             } else {
               point_colors <- as.character(pal[as.character(fvals)])
@@ -2244,7 +2354,7 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
                   y = primary_plot_df[[coords$y]][match(lvl, as.character(fvals))],
                   type = "scattergl", mode = "markers",
                   marker = list(size = sz, color = pal[lvl]),
-                  name = lvl, hoverinfo = "none"
+                  name = display_label(lvl), hoverinfo = "none"
                 )
               }
             }
@@ -2271,11 +2381,137 @@ launch_spatial_viewer <- function(seurat_path      = NULL,
         }
       }
 
+      # Legend configuration (orientation toggle)
+      legend_cfg <- list(itemsizing = "constant")
+      if (legend_orient == "h") {
+        legend_cfg$orientation <- "h"
+        legend_cfg$x           <- 0
+        legend_cfg$y           <- -0.1
+        legend_cfg$xanchor     <- "left"
+        legend_cfg$yanchor     <- "top"
+      }
+
+      # Scale bar (spatial or polygon mode only)
+      sb_shapes      <- list()
+      sb_annotations <- list()
+      if (isTRUE(input$show_scale_bar) &&
+          (polygon_mode ||
+           (!is.null(input$coord_type) && input$coord_type == "spatial"))) {
+
+        zs_sb <- zoom_state()
+        if (!is.null(zs_sb) && !is.null(zs_sb[["xaxis.range[0]"]])) {
+          x_vis <- c(zs_sb[["xaxis.range[0]"]], zs_sb[["xaxis.range[1]"]])
+          y_vis <- c(zs_sb[["yaxis.range[0]"]], zs_sb[["yaxis.range[1]"]])
+        } else if (polygon_mode) {
+          x_vis <- range(poly_centroids$cx)
+          y_vis <- range(poly_centroids$cy)
+        } else {
+          x_vis <- range(df[[x_col]], na.rm = TRUE)
+          y_vis <- range(df[[y_col]], na.rm = TRUE)
+        }
+
+        vis_w <- diff(x_vis)
+        vis_h <- diff(y_vis)
+        if (vis_w > 0 && vis_h > 0) {
+          override_len   <- input$scale_bar_max_len
+          mpp_early      <- { v <- input$scale_bar_mpp; if (is.null(v) || is.na(v) || v <= 0) 0.12028 else v }
+          unit_sel_early <- input$scale_bar_unit
+          if (!is.null(override_len) && !is.na(override_len) && override_len > 0) {
+            bar_len <- switch(unit_sel_early,
+              "mm"   = if (polygon_mode) override_len * 1000 / mpp_early else override_len,
+              "um"   = if (polygon_mode) override_len / mpp_early        else override_len / 1000,
+              "px"   = if (polygon_mode) override_len                    else override_len * mpp_early / 1000,
+              override_len  # "auto" / "none" — treat as native coordinates
+            )
+          } else {
+            # Round in display-unit space so the label is always a clean number.
+            # "auto" in polygon mode → round in µm (auto-scales to mm if >= 1000).
+            vis_w_disp <- switch(unit_sel_early,
+              "mm"   = if (polygon_mode) vis_w * mpp_early / 1000 else vis_w,
+              "um"   = if (polygon_mode) vis_w * mpp_early        else vis_w * 1000,
+              "px"   = if (polygon_mode) vis_w                    else vis_w * 1000 / mpp_early,
+              if (polygon_mode) vis_w * mpp_early else vis_w  # "auto"/"none"
+            )
+            target    <- vis_w_disp / 8
+            mag       <- 10^floor(log10(max(target, 1e-10)))
+            options   <- c(1, 2, 5) * mag
+            nice_disp <- options[which.min(abs(options - target))]
+            bar_len   <- switch(unit_sel_early,
+              "mm"   = if (polygon_mode) nice_disp * 1000 / mpp_early else nice_disp,
+              "um"   = if (polygon_mode) nice_disp / mpp_early        else nice_disp / 1000,
+              "px"   = if (polygon_mode) nice_disp                    else nice_disp * mpp_early / 1000,
+              if (polygon_mode) nice_disp / mpp_early else nice_disp  # "auto"/"none"
+            )
+          }
+
+          placement <- input$scale_bar_placement
+          is_right  <- grepl("r$", placement)
+          is_top    <- startsWith(placement, "t")
+
+          sb_x0 <- if (is_right) x_vis[2] - vis_w * 0.03 - bar_len
+                   else           x_vis[1] + vis_w * 0.03
+          sb_x1 <- sb_x0 + bar_len
+          sb_y  <- if (is_top) y_vis[2] - vis_h * 0.05
+                   else         y_vis[1] + vis_h * 0.05
+
+          mpp      <- mpp_early
+          unit_sel <- unit_sel_early
+          bar_color <- if (!is.null(input$scale_bar_color) && nchar(input$scale_bar_color) > 0)
+                         input$scale_bar_color else "#000000"
+
+          bar_label <- if (polygon_mode) {
+            switch(unit_sel,
+              "auto" = { um <- bar_len * mpp
+                         if (um >= 1000) sprintf("%.4g mm", um / 1000)
+                         else            sprintf("%.4g μm", um) },
+              "mm"   = sprintf("%.4g mm",       bar_len * mpp / 1000),
+              "um"   = sprintf("%.4g μm",  bar_len * mpp),
+              "px"   = sprintf("%.4g px",        bar_len),
+              "none" = format(signif(bar_len, 3), big.mark = ",", scientific = FALSE)
+            )
+          } else {
+            switch(unit_sel,
+              "auto" = format(signif(bar_len, 3), big.mark = ",", scientific = FALSE),
+              "mm"   = sprintf("%.4g mm",       bar_len),
+              "um"   = sprintf("%.4g μm",  bar_len * 1000),
+              "px"   = sprintf("%.4g px",        bar_len * 1000 / mpp),
+              "none" = format(signif(bar_len, 3), big.mark = ",", scientific = FALSE)
+            )
+          }
+
+          text_above <- !isTRUE(input$scale_bar_text_pos == "below")
+          ann_y      <- if (text_above) sb_y + vis_h * 0.0125 else sb_y - vis_h * 0.0125
+          ann_anchor <- if (text_above) "bottom" else "top"
+
+          sb_shapes <- list(list(
+            type = "line",
+            x0 = sb_x0, x1 = sb_x1,
+            y0 = sb_y,  y1 = sb_y,
+            xref = "x", yref = "y",
+            line = list(color = bar_color, width = 3)
+          ))
+          sb_annotations <- list(list(
+            x       = (sb_x0 + sb_x1) / 2,
+            y       = ann_y,
+            text    = bar_label,
+            xref    = "x", yref = "y",
+            showarrow = FALSE,
+            font      = list(size = 12, color = bar_color),
+            bgcolor   = "rgba(255,255,255,0.7)",
+            borderpad = 2,
+            xanchor   = "center", yanchor = ann_anchor
+          ))
+        }
+      }
+
       layout_args <- list(
         xaxis = xaxis_config,
         yaxis = yaxis_config,
-        legend = list(itemsizing = "constant")
+        legend = legend_cfg
       )
+      if (legend_orient == "h")   layout_args$margin   <- list(b = 150)
+      if (length(sb_shapes) > 0) layout_args$shapes    <- sb_shapes
+      if (length(sb_annotations) > 0) layout_args$annotations <- sb_annotations
       dm <- dragmode_state()
       if (!is.null(dm)) layout_args$dragmode <- dm
 
