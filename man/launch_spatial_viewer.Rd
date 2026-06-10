@@ -6,16 +6,18 @@
 \usage{
 launch_spatial_viewer(
   seurat_path = NULL,
-  exclude_vars = character(0),
-  exclude_patterns = character(0),
-  x_col = "x_centroid",
-  y_col = "y_centroid",
-  reduction = "umap",
-  assay = "RNA",
+  exclude_vars = NULL,
+  exclude_patterns = NULL,
+  x_col = NULL,
+  y_col = NULL,
+  reduction = NULL,
+  assay = NULL,
   continuous_pals = NULL,
   polygon_path = NULL,
   cell_id_col = NULL,
-  celltype_col = NULL
+  celltype_col = NULL,
+  microns_per_pixel = NULL,
+  config_path = if (file.exists("config.R")) "config.R" else NULL
 )
 }
 \arguments{
@@ -53,6 +55,11 @@ cell boundary polygon vertices (columns: \code{cell}, \code{x_global_px},
 
 \item{celltype_col}{Character or \code{NULL}. Metadata column pre-selected for
 cell type grouping in the UI. Default: \code{NULL}.}
+
+\item{microns_per_pixel}{Numeric or \code{NULL}. Conversion factor from coordinate
+units to micrometres (e.g. \code{0.12} for CosMX Bruker pixel coordinates).
+Used to label the scale bar in µm/mm. If \code{NULL} the scale bar is labelled
+in raw coordinate units. Default: \code{NULL}.}
 }
 \value{
 Called for its side effect: launches a blocking Shiny application.
