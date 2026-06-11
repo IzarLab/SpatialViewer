@@ -516,6 +516,19 @@ launch_spatial_viewer <- function(seurat_path        = NULL,
                 )
               ),
               tags$hr(style = "margin: 6px 0;"),
+              checkboxInput("show_grid", "Show grid lines", value = TRUE),
+              tags$div(
+                style = "display: flex; gap: 8px;",
+                numericInput("tick_spacing_x", "X tick spacing (blank = auto):",
+                  value = NA, min = 0),
+                numericInput("tick_spacing_y", "Y tick spacing (blank = auto):",
+                  value = NA, min = 0)
+              ),
+              textInput("axis_label_x", "X-axis label (blank = default):",
+                value = "", placeholder = "default"),
+              textInput("axis_label_y", "Y-axis label (blank = default):",
+                value = "", placeholder = "default"),
+              tags$hr(style = "margin: 6px 0;"),
               uiOutput("label_overrides_ui")
             )
           )
@@ -2153,9 +2166,15 @@ launch_spatial_viewer <- function(seurat_path        = NULL,
         }
 
         # Polygon mode axis config (px coordinates, 1:1 aspect)
-        xaxis_config <- list(title = "x_global_px", zeroline = FALSE)
-        yaxis_config <- list(title = "y_global_px", zeroline = FALSE,
-                             scaleanchor = "x", scaleratio = 1)
+        x_label <- if (nzchar(input$axis_label_x)) input$axis_label_x else "x_global_px"
+        y_label <- if (nzchar(input$axis_label_y)) input$axis_label_y else "y_global_px"
+        xaxis_config <- list(title = x_label, zeroline = FALSE,
+                             showgrid = input$show_grid)
+        yaxis_config <- list(title = y_label, zeroline = FALSE,
+                             scaleanchor = "x", scaleratio = 1,
+                             showgrid = input$show_grid)
+        if (!is.na(input$tick_spacing_x)) xaxis_config$dtick <- input$tick_spacing_x
+        if (!is.na(input$tick_spacing_y)) yaxis_config$dtick <- input$tick_spacing_y
 
       } else {
         # ---- CENTROID RENDERING ----
@@ -2362,12 +2381,18 @@ launch_spatial_viewer <- function(seurat_path        = NULL,
         }
 
         # Centroid mode axis config
-        yaxis_config <- list(title = coords$y, zeroline = FALSE)
+        x_label <- if (nzchar(input$axis_label_x)) input$axis_label_x else coords$x
+        y_label <- if (nzchar(input$axis_label_y)) input$axis_label_y else coords$y
+        xaxis_config <- list(title = x_label, zeroline = FALSE,
+                             showgrid = input$show_grid)
+        yaxis_config <- list(title = y_label, zeroline = FALSE,
+                             showgrid = input$show_grid)
         if (input$coord_type == "spatial") {
           yaxis_config$scaleanchor <- "x"
           yaxis_config$scaleratio <- 1
         }
-        xaxis_config <- list(title = coords$x, zeroline = FALSE)
+        if (!is.na(input$tick_spacing_x)) xaxis_config$dtick <- input$tick_spacing_x
+        if (!is.na(input$tick_spacing_y)) yaxis_config$dtick <- input$tick_spacing_y
       }
 
       # Re-apply stored zoom state if available
